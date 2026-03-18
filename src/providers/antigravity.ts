@@ -295,6 +295,32 @@ export class AntigravityProvider {
       return snapshot;
     } catch (err) {
       logger.warn({ err }, 'Antigravity provider snapshot failed');
+      if (this.cache?.snapshot) {
+        const detail = err instanceof Error ? err.message : String(err);
+        const cachedSnapshot: AntigravitySnapshot = {
+          ...this.cache.snapshot,
+          provider: {
+            ...this.cache.snapshot.provider,
+            available: true,
+            warnings: filterDashboardWarnings([
+              ...(this.cache.snapshot.provider.warnings || []),
+              `Antigravity refresh failed; showing cached data. ${detail}`,
+            ]),
+          },
+          warnings: filterDashboardWarnings([
+            ...this.cache.snapshot.warnings,
+            `Antigravity refresh failed; showing cached data. ${detail}`,
+          ]),
+        };
+
+        this.cache = {
+          expiresAt: Date.now() + ANTIGRAVITY_POLL_INTERVAL,
+          snapshot: cachedSnapshot,
+        };
+
+        return cachedSnapshot;
+      }
+
       return buildDisabledSnapshot(
         err instanceof Error ? err.message : String(err),
       );

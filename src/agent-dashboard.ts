@@ -146,14 +146,16 @@ export class AgentDashboardService {
       ...localThreads.map((thread) => thread.id),
       ...antigravity.threads.map((thread) => thread.id),
     ]);
-    const staleAntigravityThreadIds = storedThreads
-      .filter(
-        (thread) =>
-          thread.provider === 'antigravity' && !liveThreadIds.has(thread.id),
-      )
-      .map((thread) => thread.id);
+    if (antigravity.provider.available) {
+      const staleAntigravityThreadIds = storedThreads
+        .filter(
+          (thread) =>
+            thread.provider === 'antigravity' && !liveThreadIds.has(thread.id),
+        )
+        .map((thread) => thread.id);
 
-    deleteAgentThreads(staleAntigravityThreadIds);
+      deleteAgentThreads(staleAntigravityThreadIds);
+    }
 
     const persistedThreads = storedThreads.filter(
       (thread) =>
