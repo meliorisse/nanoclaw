@@ -54,7 +54,10 @@ interface SDKUserMessage {
   session_id: string;
 }
 
-const IPC_INPUT_DIR = '/workspace/ipc/input';
+// Paths — configurable via env vars for host mode, fall back to Docker defaults
+const WORKSPACE_GROUP  = process.env.NANOCLAW_GROUP_PATH    || '/workspace/group';
+const WORKSPACE_GLOBAL = process.env.NANOCLAW_GLOBAL_DIR     || '/workspace/global';
+const IPC_INPUT_DIR    = process.env.NANOCLAW_IPC_INPUT_DIR  || '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
 
@@ -365,9 +368,10 @@ async function runQuery(
   let lastAssistantUuid: string | undefined;
   let messageCount = 0;
   let resultCount = 0;
+  let lastAssistantText = '';  // fallback for when SDK result is null (e.g., Qwen/LM Studio)
 
   // Load global CLAUDE.md as additional system context (shared across all groups)
-  const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
+  const globalClaudeMdPath = path.join(WORKSPACE_GLOBAL, 'CLAUDE.md');
   let globalClaudeMd: string | undefined;
   if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
@@ -392,7 +396,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
-      cwd: '/workspace/group',
+      cwd: WORKSPACE_GROUP,
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
@@ -400,14 +404,17 @@ async function runQuery(
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
       allowedTools: [
-        'Bash',
-        'Read', 'Write', 'Edit', 'Glob', 'Grep',
+        // Core file + shell tools
+        'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep',
+        // Web tools
         'WebSearch', 'WebFetch',
-        'Task', 'TaskOutput', 'TaskStop',
-        'TeamCreate', 'TeamDelete', 'SendMessage',
-        'TodoWrite', 'ToolSearch', 'Skill',
-        'NotebookEdit',
-        'mcp__nanoclaw__*'
+        // Sub-agent management (claude SDK)
+        'Agent', 'TaskOutput', 'TaskStop',
+        // Planning + UX
+        'EnterPlanMode', 'ExitPlanMode',
+        'TodoWrite', 'AskUserQuestion', 'Skill',
+        // Nanoclaw scheduling + messaging (via MCP)
+        'mcp__nanoclaw__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -415,12 +422,17 @@ async function runQuery(
       settingSources: ['project', 'user'],
       mcpServers: {
         nanoclaw: {
-          command: 'node',
+          command: process.env.NANOCLAW_NODE_PATH || 'node',
           args: [mcpServerPath],
           env: {
             NANOCLAW_CHAT_JID: containerInput.chatJid,
             NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            // IPC dirs for host mode — ipc-watcher reads from messages/ and tasks/ dirs
+            ...(process.env.NANOCLAW_IPC_MESSAGES_DIR ? {
+              NANOCLAW_IPC_MESSAGES_DIR: process.env.NANOCLAW_IPC_MESSAGES_DIR,
+              NANOCLAW_IPC_TASKS_DIR: process.env.NANOCLAW_IPC_TASKS_DIR,
+            } : {}),
           },
         },
       },
@@ -432,6 +444,18 @@ async function runQuery(
     messageCount++;
     const msgType = message.type === 'system' ? `system/${(message as { subtype?: string }).subtype}` : message.type;
     log(`[msg #${messageCount}] type=${msgType}`);
+
+    if (message.type === 'assistant' && 'message' in message) {
+      // Track last assistant text as fallback when SDK result is null (e.g. Qwen/LM Studio)
+      const content = (message as { message?: { content?: unknown } }).message?.content;
+      if (Array.isArray(content)) {
+        const text = content
+          .filter((c: { type: string }) => c.type === 'text')
+          .map((c: { text: string }) => c.text)
+          .join('');
+        if (text) lastAssistantText = text;
+      }
+    }
 
     if (message.type === 'assistant' && 'uuid' in message) {
       lastAssistantUuid = (message as { uuid: string }).uuid;
@@ -450,13 +474,18 @@ async function runQuery(
     if (message.type === 'result') {
       resultCount++;
       const textResult = 'result' in message ? (message as { result?: string }).result : null;
-      log(`Result #${resultCount}: subtype=${message.subtype}${textResult ? ` text=${textResult.slice(0, 200)}` : ''}`);
+      // Fall back to last assistant text if SDK doesn't populate the result field
+      const finalResult = textResult || lastAssistantText || null;
+      log(`Result #${resultCount}: subtype=${message.subtype}${finalResult ? ` text=${finalResult.slice(0, 200)}` : ' (null)'}`);
       writeOutput({
         status: 'success',
-        result: textResult || null,
+        result: finalResult,
         newSessionId
       });
+      // Reset for next query turn
+      lastAssistantText = '';
     }
+
   }
 
   ipcPolling = false;

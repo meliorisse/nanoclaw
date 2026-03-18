@@ -6,6 +6,9 @@ import { ASSISTANT_NAME, DATA_DIR, STORE_DIR } from './config.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
+  AgentThreadAction,
+  AgentThread,
+  AntigravityGroupMapping,
   NewMessage,
   RegisteredGroup,
   ScheduledTask,
@@ -82,6 +85,38 @@ function createSchema(database: Database.Database): void {
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+    CREATE TABLE IF NOT EXISTS agent_threads (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL,
+      external_ref TEXT NOT NULL,
+      title TEXT NOT NULL,
+      group_jid TEXT,
+      effort TEXT NOT NULL,
+      desired_effort TEXT,
+      state TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL,
+      metadata_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_threads_provider ON agent_threads(provider);
+    CREATE INDEX IF NOT EXISTS idx_agent_threads_state ON agent_threads(state);
+
+    CREATE TABLE IF NOT EXISTS agent_thread_actions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      thread_id TEXT NOT NULL,
+      target_effort TEXT NOT NULL,
+      status TEXT NOT NULL,
+      note TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_agent_thread_actions_thread ON agent_thread_actions(thread_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS antigravity_group_mappings (
+      group_jid TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      project_ref TEXT NOT NULL,
+      project_name TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -138,6 +173,14 @@ function createSchema(database: Database.Database): void {
     );
   } catch {
     /* columns already exist */
+  }
+
+  try {
+    database.exec(
+      `ALTER TABLE agent_thread_actions ADD COLUMN action_type TEXT DEFAULT 'effort_change'`,
+    );
+  } catch {
+    /* column already exists */
   }
 }
 
@@ -363,6 +406,27 @@ export function getMessagesSince(
     .all(chatJid, sinceTimestamp, `${botPrefix}:%`, limit) as NewMessage[];
 }
 
+/**
+ * Return the last N messages for a chat (both user and bot), oldest first.
+ * Used by the WebUI to replay history in a new browser tab.
+ */
+export function getChatHistory(
+  chatJid: string,
+  limit = 100,
+): NewMessage[] {
+  const sql = `
+    SELECT * FROM (
+      SELECT id, chat_jid, sender, sender_name, content, timestamp,
+             is_from_me, is_bot_message
+      FROM messages
+      WHERE chat_jid = ? AND content != '' AND content IS NOT NULL
+      ORDER BY timestamp DESC
+      LIMIT ?
+    ) ORDER BY timestamp
+  `;
+  return db.prepare(sql).all(chatJid, limit) as NewMessage[];
+}
+
 export function createTask(
   task: Omit<ScheduledTask, 'last_run' | 'last_result'>,
 ): void {
@@ -403,6 +467,236 @@ export function getAllTasks(): ScheduledTask[] {
   return db
     .prepare('SELECT * FROM scheduled_tasks ORDER BY created_at DESC')
     .all() as ScheduledTask[];
+}
+
+export function upsertAgentThread(thread: AgentThread): void {
+  db.prepare(
+    `
+    INSERT INTO agent_threads (
+      id, provider, external_ref, title, group_jid, effort, desired_effort, state, last_seen_at, metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      provider = excluded.provider,
+      external_ref = excluded.external_ref,
+      title = excluded.title,
+      group_jid = excluded.group_jid,
+      effort = excluded.effort,
+      desired_effort = COALESCE(excluded.desired_effort, agent_threads.desired_effort),
+      state = excluded.state,
+      last_seen_at = excluded.last_seen_at,
+      metadata_json = excluded.metadata_json
+  `,
+  ).run(
+    thread.id,
+    thread.provider,
+    thread.externalRef,
+    thread.title,
+    thread.groupJid,
+    thread.effort,
+    thread.desiredEffort,
+    thread.state,
+    thread.lastSeenAt,
+    thread.metadataJson,
+  );
+}
+
+export function getAgentThread(id: string): AgentThread | undefined {
+  const row = db.prepare('SELECT * FROM agent_threads WHERE id = ?').get(id) as
+    | {
+        id: string;
+        provider: AgentThread['provider'];
+        external_ref: string;
+        title: string;
+        group_jid: string | null;
+        effort: AgentThread['effort'];
+        desired_effort: AgentThread['desiredEffort'];
+        state: AgentThread['state'];
+        last_seen_at: string;
+        metadata_json: string | null;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+
+  return {
+    id: row.id,
+    provider: row.provider,
+    externalRef: row.external_ref,
+    title: row.title,
+    groupJid: row.group_jid,
+    effort: row.effort,
+    desiredEffort: row.desired_effort,
+    state: row.state,
+    lastSeenAt: row.last_seen_at,
+    metadataJson: row.metadata_json,
+  };
+}
+
+export function listAgentThreads(): AgentThread[] {
+  const rows = db
+    .prepare('SELECT * FROM agent_threads ORDER BY last_seen_at DESC, title ASC')
+    .all() as Array<{
+    id: string;
+    provider: AgentThread['provider'];
+    external_ref: string;
+    title: string;
+    group_jid: string | null;
+    effort: AgentThread['effort'];
+    desired_effort: AgentThread['desiredEffort'];
+    state: AgentThread['state'];
+    last_seen_at: string;
+    metadata_json: string | null;
+  }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    provider: row.provider,
+    externalRef: row.external_ref,
+    title: row.title,
+    groupJid: row.group_jid,
+    effort: row.effort,
+    desiredEffort: row.desired_effort,
+    state: row.state,
+    lastSeenAt: row.last_seen_at,
+    metadataJson: row.metadata_json,
+  }));
+}
+
+export function setAgentThreadDesiredEffort(
+  id: string,
+  desiredEffort: AgentThread['desiredEffort'],
+): void {
+  db.prepare(
+    'UPDATE agent_threads SET desired_effort = ? WHERE id = ?',
+  ).run(desiredEffort, id);
+}
+
+export function recordAgentThreadAction(input: {
+  threadId: string;
+  actionType?: string;
+  targetEffort: AgentThread['effort'] | null;
+  status: string;
+  note: string;
+}): void {
+  db.prepare(
+    `
+    INSERT INTO agent_thread_actions (thread_id, action_type, target_effort, status, note, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `,
+  ).run(
+    input.threadId,
+    input.actionType || 'effort_change',
+    input.targetEffort,
+    input.status,
+    input.note,
+    new Date().toISOString(),
+  );
+}
+
+export function listAgentThreadActions(threadId: string): AgentThreadAction[] {
+  const rows = db
+    .prepare(
+      `
+      SELECT id, thread_id, action_type, target_effort, status, note, created_at
+      FROM agent_thread_actions
+      WHERE thread_id = ?
+      ORDER BY created_at DESC, id DESC
+    `,
+    )
+    .all(threadId) as Array<{
+    id: number;
+    thread_id: string;
+    action_type: string | null;
+    target_effort: AgentThreadAction['targetEffort'];
+    status: string;
+    note: string | null;
+    created_at: string;
+  }>;
+
+  return rows.map((row) => ({
+    id: row.id,
+    threadId: row.thread_id,
+    actionType: row.action_type || 'effort_change',
+    targetEffort: row.target_effort,
+    status: row.status,
+    note: row.note,
+    createdAt: row.created_at,
+  }));
+}
+
+export function upsertAntigravityGroupMapping(
+  mapping: Omit<AntigravityGroupMapping, 'updatedAt'>,
+): AntigravityGroupMapping {
+  const updatedAt = new Date().toISOString();
+  db.prepare(
+    `
+    INSERT INTO antigravity_group_mappings (group_jid, project_id, project_ref, project_name, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(group_jid) DO UPDATE SET
+      project_id = excluded.project_id,
+      project_ref = excluded.project_ref,
+      project_name = excluded.project_name,
+      updated_at = excluded.updated_at
+  `,
+  ).run(
+    mapping.groupJid,
+    mapping.projectId,
+    mapping.projectRef,
+    mapping.projectName,
+    updatedAt,
+  );
+
+  return getAntigravityGroupMapping(mapping.groupJid)!;
+}
+
+export function getAntigravityGroupMapping(
+  groupJid: string,
+): AntigravityGroupMapping | undefined {
+  const row = db
+    .prepare(
+      'SELECT group_jid, project_id, project_ref, project_name, updated_at FROM antigravity_group_mappings WHERE group_jid = ?',
+    )
+    .get(groupJid) as
+    | {
+        group_jid: string;
+        project_id: string;
+        project_ref: string;
+        project_name: string;
+        updated_at: string;
+      }
+    | undefined;
+
+  if (!row) return undefined;
+
+  return {
+    groupJid: row.group_jid,
+    projectId: row.project_id,
+    projectRef: row.project_ref,
+    projectName: row.project_name,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function listAntigravityGroupMappings(): AntigravityGroupMapping[] {
+  const rows = db
+    .prepare(
+      'SELECT group_jid, project_id, project_ref, project_name, updated_at FROM antigravity_group_mappings ORDER BY updated_at DESC',
+    )
+    .all() as Array<{
+    group_jid: string;
+    project_id: string;
+    project_ref: string;
+    project_name: string;
+    updated_at: string;
+  }>;
+
+  return rows.map((row) => ({
+    groupJid: row.group_jid,
+    projectId: row.project_id,
+    projectRef: row.project_ref,
+    projectName: row.project_name,
+    updatedAt: row.updated_at,
+  }));
 }
 
 export function updateTask(

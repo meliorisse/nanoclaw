@@ -11,9 +11,11 @@ import fs from 'fs';
 import path from 'path';
 import { CronExpressionParser } from 'cron-parser';
 
-const IPC_DIR = '/workspace/ipc';
-const MESSAGES_DIR = path.join(IPC_DIR, 'messages');
-const TASKS_DIR = path.join(IPC_DIR, 'tasks');
+// In host mode, NANOCLAW_IPC_MESSAGES_DIR points to data/ipc/{group}/messages
+// which is where the ipc-watcher reads send_message files from.
+// In Docker mode, fall back to /workspace/ipc paths.
+const MESSAGES_DIR = process.env.NANOCLAW_IPC_MESSAGES_DIR || '/workspace/ipc/messages';
+const TASKS_DIR = process.env.NANOCLAW_IPC_TASKS_DIR || '/workspace/ipc/tasks';
 
 // Context from environment variables (set by the agent runner)
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
@@ -157,7 +159,8 @@ server.tool(
   "List all scheduled tasks. From main: shows all tasks. From other groups: shows only that group's tasks.",
   {},
   async () => {
-    const tasksFile = path.join(IPC_DIR, 'current_tasks.json');
+    const tasksFile = path.join(path.dirname(TASKS_DIR), 'current_tasks.json');
+
 
     try {
       if (!fs.existsSync(tasksFile)) {

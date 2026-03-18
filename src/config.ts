@@ -57,6 +57,22 @@ export const MAX_CONCURRENT_CONTAINERS = Math.max(
   1,
   parseInt(process.env.MAX_CONCURRENT_CONTAINERS || '5', 10) || 5,
 );
+export const WEBUI_REFRESH_INTERVAL = Math.max(
+  1000,
+  parseInt(process.env.WEBUI_REFRESH_INTERVAL || '2000', 10) || 2000,
+);
+export const ANTIGRAVITY_ENABLED =
+  (process.env.ANTIGRAVITY_ENABLED || 'false').toLowerCase() === 'true';
+export const ANTIGRAVITY_OVERSEER_DIR = path.resolve(
+  process.env.ANTIGRAVITY_OVERSEER_DIR ||
+    path.join(HOME_DIR, 'Documents', 'antigravity-overseer'),
+);
+export const ANTIGRAVITY_POLL_INTERVAL = Math.max(
+  1000,
+  parseInt(process.env.ANTIGRAVITY_POLL_INTERVAL || '2000', 10) || 2000,
+);
+export const ANTIGRAVITY_MCP_ENTRY =
+  process.env.ANTIGRAVITY_MCP_ENTRY || 'src/mcp/server.ts';
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

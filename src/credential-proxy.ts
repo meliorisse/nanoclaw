@@ -16,6 +16,7 @@ import { request as httpRequest, RequestOptions } from 'http';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+import { handleAnthropicTranslation } from './anthropic-openai-translator.js';
 
 export type AuthMode = 'api-key' | 'oauth';
 
@@ -32,6 +33,7 @@ export function startCredentialProxy(
     'CLAUDE_CODE_OAUTH_TOKEN',
     'ANTHROPIC_AUTH_TOKEN',
     'ANTHROPIC_BASE_URL',
+    'LOCAL_MODEL',
   ]);
 
   const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
@@ -43,6 +45,15 @@ export function startCredentialProxy(
   );
   const isHttps = upstreamUrl.protocol === 'https:';
   const makeRequest = isHttps ? httpsRequest : httpRequest;
+
+  // When the upstream is a local model (e.g. LM Studio), activate the
+  // Anthropic ↔ OpenAI translator so the claude binary and LM Studio
+  // can understand each other's API formats (tool calls, messages, SSE).
+  const isLocalModel =
+    upstreamUrl.hostname === 'localhost' ||
+    upstreamUrl.hostname === '127.0.0.1' ||
+    !upstreamUrl.hostname.includes('anthropic.com');
+  const localModel = secrets.LOCAL_MODEL || 'local-model';
 
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
@@ -63,19 +74,31 @@ export function startCredentialProxy(
         delete headers['transfer-encoding'];
 
         if (authMode === 'api-key') {
-          // API key mode: inject x-api-key on every request
           delete headers['x-api-key'];
           headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
         } else {
-          // OAuth mode: replace placeholder Bearer token with the real one
-          // only when the container actually sends an Authorization header
-          // (exchange request + auth probes). Post-exchange requests use
-          // x-api-key only, so they pass through without token injection.
           if (headers['authorization']) {
             delete headers['authorization'];
-            if (oauthToken) {
-              headers['authorization'] = `Bearer ${oauthToken}`;
+            if (oauthToken) headers['authorization'] = `Bearer ${oauthToken}`;
+          }
+        }
+
+        // For local models: LM Studio handles /v1/messages natively (Anthropic API compat).
+        // We just patch max_tokens so the claude binary's default 32000 doesn't overflow
+        // a 32k context window when combined with a large prompt.
+        let forwardBody = body;
+        if (isLocalModel && req.url?.includes('/messages')) {
+          try {
+            const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
+            const MAX_OUTPUT_TOKENS = 4000;
+            if (typeof parsed.max_tokens === 'number' && parsed.max_tokens > MAX_OUTPUT_TOKENS) {
+              parsed.max_tokens = MAX_OUTPUT_TOKENS;
+              const patched = JSON.stringify(parsed);
+              forwardBody = Buffer.from(patched);
+              headers['content-length'] = forwardBody.length;
             }
+          } catch {
+            // Non-JSON body — forward unchanged
           }
         }
 
@@ -86,12 +109,25 @@ export function startCredentialProxy(
             path: req.url,
             method: req.method,
             headers,
+            // For local models, cap time waiting for a response to 10 minutes.
+            // LM Studio can stall indefinitely on large contexts.
+            ...(isLocalModel ? { timeout: 10 * 60 * 1000 } : {}),
           } as RequestOptions,
           (upRes) => {
             res.writeHead(upRes.statusCode!, upRes.headers);
             upRes.pipe(res);
           },
         );
+
+        // Timeout fires if LM Studio stalls before sending any response bytes
+        upstream.on('timeout', () => {
+          logger.warn({ url: req.url }, 'Local model request timed out after 10 minutes');
+          upstream.destroy();
+          if (!res.headersSent) {
+            res.writeHead(504, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Local model request timed out' } }));
+          }
+        });
 
         upstream.on('error', (err) => {
           logger.error(
@@ -101,10 +137,12 @@ export function startCredentialProxy(
           if (!res.headersSent) {
             res.writeHead(502);
             res.end('Bad Gateway');
+
           }
         });
 
-        upstream.write(body);
+        upstream.write(forwardBody);
+
         upstream.end();
       });
     });

@@ -4,6 +4,7 @@
  */
 import { ChildProcess, exec, spawn } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import {
@@ -207,6 +208,14 @@ function buildVolumeMounts(
       isMain,
     );
     mounts.push(...validatedMounts);
+  }
+
+  // Mount ~/CLAWSPACE from the host into the container's home directory.
+  // Uses os.homedir() so it works regardless of username.
+  const clawspaceHost = path.join(os.homedir(), 'CLAWSPACE');
+  const clawspaceContainer = '/home/node/CLAWSPACE';
+  if (fs.existsSync(clawspaceHost)) {
+    mounts.push({ hostPath: clawspaceHost, containerPath: clawspaceContainer, readonly: false });
   }
 
   return mounts;
@@ -638,6 +647,236 @@ export async function runContainerAgent(
         result: null,
         error: `Container spawn error: ${err.message}`,
       });
+    });
+  });
+}
+
+/**
+ * Run the agent directly on the host (no Docker).
+ * Same stdin/stdout protocol as runContainerAgent.
+ * Useful for the webui group where the user wants full host access.
+ */
+export async function runHostAgent(
+  group: RegisteredGroup,
+  input: ContainerInput,
+  onProcess: (proc: ChildProcess, containerName: string) => void,
+  onOutput?: (output: ContainerOutput) => Promise<void>,
+): Promise<ContainerOutput> {
+  const startTime = Date.now();
+  const groupDir = resolveGroupFolderPath(group.folder);
+  const groupIpcDir = resolveGroupIpcPath(group.folder);
+  const globalDir = path.join(GROUPS_DIR, 'global');
+  const agentRunnerDir = path.join(process.cwd(), 'container', 'agent-runner');
+  const agentRunnerEntry = path.join(agentRunnerDir, 'dist', 'index.js');
+
+  fs.mkdirSync(groupDir, { recursive: true });
+  fs.mkdirSync(path.join(groupIpcDir, 'input'), { recursive: true });
+  fs.mkdirSync(path.join(groupDir, 'logs'), { recursive: true });
+
+  // Ensure the agent-runner is installed and built on the host
+  if (!fs.existsSync(agentRunnerEntry)) {
+    logger.info({ group: group.name }, 'Host mode: building agent-runner for first use');
+    await new Promise<void>((res, rej) => {
+      exec(
+        'npm install && npm run build',
+        { cwd: agentRunnerDir, timeout: 120_000 },
+        (err) => err ? rej(err) : res(),
+      );
+    });
+  }
+
+  // Per-group Claude sessions dir (same as container mode)
+  const groupSessionsDir = path.join(DATA_DIR, 'sessions', group.folder);
+  fs.mkdirSync(path.join(groupSessionsDir, 'skills'), { recursive: true });
+  // Sync skills
+  const skillsSrc = path.join(process.cwd(), 'container', 'skills');
+  const skillsDst = path.join(groupSessionsDir, 'skills');
+  if (fs.existsSync(skillsSrc)) {
+    for (const skillDir of fs.readdirSync(skillsSrc)) {
+      const srcDir = path.join(skillsSrc, skillDir);
+      if (!fs.statSync(srcDir).isDirectory()) continue;
+      const dstDir = path.join(skillsDst, skillDir);
+      fs.cpSync(srcDir, dstDir, { recursive: true });
+    }
+  }
+
+  // Set up a fake home dir so `$HOME/.claude` points to our isolated sessions dir.
+  // This lets Claude Code find/save sessions without polluting the real user home.
+  const fakeHome = path.join(DATA_DIR, 'host-home', group.folder);
+  fs.mkdirSync(fakeHome, { recursive: true });
+  const dotClaude = path.join(fakeHome, '.claude');
+  if (!fs.existsSync(dotClaude)) {
+    fs.symlinkSync(groupSessionsDir, dotClaude);
+  }
+
+  const authMode = detectAuthMode();
+
+  const agentEnv: Record<string, string | undefined> = {
+    ...process.env,
+    // Add node's directory to PATH so the SDK can find its own bundled cli.js
+    // (same approach as Docker mode where node is in PATH via the base image).
+    // This ensures tool calling works correctly — the user's installed claude
+    // binary may behave differently from the version shipped with claude-agent-sdk.
+    PATH: [
+      path.dirname(process.execPath),       // node binary dir
+      '/Users/unitybox/homebrew/bin',        // Homebrew
+      '/Users/unitybox/homebrew/sbin',
+      '/usr/local/bin',                      // misc CLI tools
+      process.env.PATH || '/usr/bin:/bin',
+    ].join(':'),
+
+    // Route through same credential proxy as containers
+    ANTHROPIC_BASE_URL: `http://127.0.0.1:${CREDENTIAL_PROXY_PORT}`,
+    ANTHROPIC_API_KEY: authMode === 'api-key' ? 'placeholder' : undefined,
+    CLAUDE_CODE_OAUTH_TOKEN: authMode !== 'api-key' ? 'placeholder' : undefined,
+    // Map workspace paths to real host paths
+    NANOCLAW_GROUP_PATH: groupDir,
+    NANOCLAW_GLOBAL_DIR: fs.existsSync(globalDir) ? globalDir : undefined,
+    NANOCLAW_IPC_INPUT_DIR: path.join(groupIpcDir, 'input'),
+    NANOCLAW_IPC_MESSAGES_DIR: path.join(groupIpcDir, 'messages'),
+    NANOCLAW_IPC_TASKS_DIR: path.join(groupIpcDir, 'tasks'),
+
+    // Claude Code settings
+    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+    CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+    // Match the max_tokens cap we enforce in the credential proxy so the
+    // SDK doesn't flag responses as exceeding its internal output limit.
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS: '4000',
+
+    // Node path for MCP server subprocess
+    NANOCLAW_NODE_PATH: process.execPath,
+    // Point HOME to our fake home so $HOME/.claude maps to the group sessions dir.
+    HOME: fakeHome,
+    TZ: TIMEZONE,
+  };
+
+
+  const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
+  const processLabel = `nanoclaw-host-${safeName}-${Date.now()}`;
+
+  logger.info(
+    { group: group.name, processLabel, groupDir },
+    'Spawning host agent (no container)',
+  );
+
+  // Host agents interact with a LOCAL LLM which can stall indefinitely.
+  // Cap at 5 minutes of inactivity rather than the container's 30-minute default.
+  const HOST_AGENT_TIMEOUT = 15 * 60 * 1000; // 15 min (matches 10-min LM Studio request timeout + buffer)
+
+  const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
+  const timeoutMs = Math.min(Math.max(configTimeout, IDLE_TIMEOUT + 30_000), HOST_AGENT_TIMEOUT);
+
+
+  return new Promise((resolve) => {
+    const proc = spawn(process.execPath, [agentRunnerEntry], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: agentEnv as NodeJS.ProcessEnv,
+      cwd: groupDir,
+    });
+
+    onProcess(proc, processLabel);
+
+    // Don't resume Docker sessions — they're ephemeral. Start fresh each run.
+    const hostInput = { ...input, sessionId: undefined };
+    proc.stdin.write(JSON.stringify(hostInput));
+
+    proc.stdin.end();
+
+    let stdout = '';
+    let stderr = '';
+    let parseBuffer = '';
+    let newSessionId: string | undefined;
+    let outputChain = Promise.resolve();
+    let hadStreamingOutput = false;
+    let timedOut = false;
+
+    const killOnTimeout = () => {
+      timedOut = true;
+      logger.error({ group: group.name, processLabel }, 'Host agent timeout, killing');
+      proc.kill('SIGTERM');
+      setTimeout(() => proc.kill('SIGKILL'), 5000);
+    };
+
+    let timeout = setTimeout(killOnTimeout, timeoutMs);
+    const resetTimeout = () => { clearTimeout(timeout); timeout = setTimeout(killOnTimeout, timeoutMs); };
+
+    proc.stdout.on('data', (data) => {
+      const chunk = data.toString();
+      stdout += chunk;
+      if (onOutput) {
+        parseBuffer += chunk;
+        let startIdx: number;
+        while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
+          const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
+          if (endIdx === -1) break;
+          const jsonStr = parseBuffer.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim();
+          parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
+          try {
+            const parsed: ContainerOutput = JSON.parse(jsonStr);
+            if (parsed.newSessionId) newSessionId = parsed.newSessionId;
+            hadStreamingOutput = true;
+            resetTimeout();
+            outputChain = outputChain.then(() => onOutput(parsed));
+          } catch (err) {
+            logger.warn({ group: group.name, err }, 'Failed to parse host agent output chunk');
+          }
+        }
+      }
+    });
+
+    proc.stderr.on('data', (data) => {
+      const chunk = data.toString();
+      stderr += chunk;
+      for (const line of chunk.trim().split('\n')) {
+        if (line) logger.debug({ group: group.folder }, `[host-agent] ${line}`);
+      }
+    });
+
+    proc.on('close', (code) => {
+      clearTimeout(timeout);
+      const duration = Date.now() - startTime;
+
+      if (timedOut) {
+        if (hadStreamingOutput) {
+          outputChain.then(() => resolve({ status: 'success', result: null, newSessionId }));
+        } else {
+          resolve({ status: 'error', result: null, error: `Host agent timed out after ${configTimeout}ms` });
+        }
+        return;
+      }
+
+      if (code !== 0) {
+        logger.error({ group: group.name, code, duration, stderr }, 'Host agent exited with error');
+        resolve({ status: 'error', result: null, error: `Host agent exited with code ${code}: ${stderr.slice(-200)}` });
+        return;
+      }
+
+      if (onOutput) {
+        outputChain.then(() => {
+          logger.info({ group: group.name, duration, newSessionId }, 'Host agent completed (streaming)');
+          resolve({ status: 'success', result: null, newSessionId });
+        });
+        return;
+      }
+
+      // Legacy: parse last output block
+      try {
+        const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
+        const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
+        let jsonLine = startIdx !== -1 && endIdx > startIdx
+          ? stdout.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim()
+          : stdout.trim().split('\n').at(-1) ?? '';
+        resolve(JSON.parse(jsonLine));
+      } catch (err) {
+        resolve({ status: 'error', result: null, error: `Parse error: ${err instanceof Error ? err.message : String(err)}` });
+      }
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timeout);
+      logger.error({ group: group.name, err }, 'Host agent spawn error');
+      resolve({ status: 'error', result: null, error: `Host agent spawn error: ${err.message}` });
     });
   });
 }

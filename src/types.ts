@@ -40,6 +40,7 @@ export interface RegisteredGroup {
   containerConfig?: ContainerConfig;
   requiresTrigger?: boolean; // Default: true for groups, false for solo chats
   isMain?: boolean; // True for the main control group (no trigger, elevated privileges)
+  hostMode?: boolean; // Run agent directly on host instead of inside a Docker container
 }
 
 export interface NewMessage {
@@ -75,6 +76,104 @@ export interface TaskRunLog {
   status: 'success' | 'error';
   result: string | null;
   error: string | null;
+}
+
+export type AgentProvider = 'local' | 'antigravity';
+export type EffortLevel = 'low' | 'high';
+export type AgentThreadState =
+  | 'idle'
+  | 'running'
+  | 'queued'
+  | 'waiting'
+  | 'scheduled'
+  | 'unknown';
+
+export interface AgentThread {
+  id: string;
+  provider: AgentProvider;
+  externalRef: string;
+  title: string;
+  groupJid: string | null;
+  effort: EffortLevel;
+  desiredEffort: EffortLevel | null;
+  state: AgentThreadState;
+  lastSeenAt: string;
+  metadataJson: string | null;
+}
+
+export interface AgentProviderHealth {
+  provider: AgentProvider;
+  enabled: boolean;
+  available: boolean;
+  pollIntervalMs: number;
+  warnings: string[];
+}
+
+export interface AntigravityProjectOption {
+  projectId: string;
+  projectRef: string;
+  name: string;
+}
+
+export interface AntigravityGroupMapping {
+  groupJid: string;
+  projectId: string;
+  projectRef: string;
+  projectName: string;
+  updatedAt: string;
+}
+
+export interface AgentThreadAction {
+  id: number;
+  threadId: string;
+  actionType: string;
+  targetEffort: EffortLevel | null;
+  status: string;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface AgentThreadTimeline {
+  thread: AgentThread | null;
+  actions: AgentThreadAction[];
+}
+
+export interface AgentThreadPreviewMessage {
+  role: 'user' | 'assistant' | 'system' | 'unknown';
+  author: string;
+  text: string;
+  createdAt: string | null;
+}
+
+export interface AgentThreadEvidenceLink {
+  label: string;
+  path: string;
+  kind: 'file' | 'url';
+}
+
+export interface AgentThreadInspector {
+  thread: AgentThread | null;
+  actions: AgentThreadAction[];
+  summary: string | null;
+  previewMessages: AgentThreadPreviewMessage[];
+  evidence: AgentThreadEvidenceLink[];
+}
+
+export interface AgentDashboardSnapshot {
+  updatedAt: string;
+  refreshIntervalMs: number;
+  warnings: string[];
+  providers: AgentProviderHealth[];
+  antigravityProjects: AntigravityProjectOption[];
+  antigravityMappings: AntigravityGroupMapping[];
+  threads: AgentThread[];
+}
+
+export interface EffortChangeResult {
+  ok: boolean;
+  threadId: string;
+  targetEffort: EffortLevel;
+  message: string;
 }
 
 // --- Channel abstraction ---

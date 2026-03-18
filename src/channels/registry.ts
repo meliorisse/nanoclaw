@@ -1,5 +1,10 @@
 import {
+  AgentDashboardSnapshot,
+  AgentThreadInspector,
+  AgentThreadTimeline,
   Channel,
+  EffortChangeResult,
+  AntigravityGroupMapping,
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
@@ -9,6 +14,21 @@ export interface ChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
   registeredGroups: () => Record<string, RegisteredGroup>;
+  registerGroup: (jid: string, group: RegisteredGroup) => void;
+  getAgentDashboard: () => Promise<AgentDashboardSnapshot>;
+  requestEffortChange: (
+    threadId: string,
+    targetEffort: 'low' | 'high',
+  ) => Promise<EffortChangeResult>;
+  setAntigravityMapping: (
+    groupJid: string,
+    projectId: string,
+  ) => Promise<
+    | { ok: true; mapping: AntigravityGroupMapping }
+    | { ok: false; error: string }
+  >;
+  getThreadTimeline: (threadId: string) => AgentThreadTimeline;
+  getThreadInspector: (threadId: string) => Promise<AgentThreadInspector>;
 }
 
 export type ChannelFactory = (opts: ChannelOpts) => Channel | null;

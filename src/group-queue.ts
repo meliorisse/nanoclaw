@@ -27,6 +27,18 @@ interface GroupState {
   retryCount: number;
 }
 
+export interface GroupQueueSnapshotEntry {
+  groupJid: string;
+  active: boolean;
+  idleWaiting: boolean;
+  isTaskContainer: boolean;
+  runningTaskId: string | null;
+  pendingMessages: boolean;
+  pendingTaskCount: number;
+  containerName: string | null;
+  groupFolder: string | null;
+}
+
 export class GroupQueue {
   private groups = new Map<string, GroupState>();
   private activeCount = 0;
@@ -139,6 +151,26 @@ export class GroupQueue {
     state.process = proc;
     state.containerName = containerName;
     if (groupFolder) state.groupFolder = groupFolder;
+  }
+
+  getSnapshot(): Record<string, GroupQueueSnapshotEntry> {
+    const snapshot: Record<string, GroupQueueSnapshotEntry> = {};
+
+    for (const [groupJid, state] of this.groups.entries()) {
+      snapshot[groupJid] = {
+        groupJid,
+        active: state.active,
+        idleWaiting: state.idleWaiting,
+        isTaskContainer: state.isTaskContainer,
+        runningTaskId: state.runningTaskId,
+        pendingMessages: state.pendingMessages,
+        pendingTaskCount: state.pendingTasks.length,
+        containerName: state.containerName,
+        groupFolder: state.groupFolder,
+      };
+    }
+
+    return snapshot;
   }
 
   /**

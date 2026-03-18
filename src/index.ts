@@ -18,6 +18,7 @@ import {
 import {
   ContainerOutput,
   runContainerAgent,
+  runHostAgent,
   writeGroupsSnapshot,
   writeTasksSnapshot,
 } from './container-runner.js';
@@ -31,6 +32,7 @@ import {
   getAllRegisteredGroups,
   getAllSessions,
   getAllTasks,
+  getChatHistory,
   getMessagesSince,
   getNewMessages,
   getRegisteredGroup,
@@ -46,6 +48,7 @@ import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
 import { findChannel, formatMessages, formatOutbound } from './router.js';
+import { AgentDashboardService } from './agent-dashboard.js';
 import {
   restoreRemoteControl,
   startRemoteControl,
@@ -180,7 +183,33 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages, TIMEZONE);
+  // For hostMode groups, sessions are stateless — prepend recent conversation
+  // history so the agent has context about previous exchanges.
+  // Budget: ~40k chars ≈ 10k tokens for history. System prompts + tool
+  // definitions from the claude binary add another ~15-20k tokens, so this
+  // keeps the total well under the 32k context window.
+  const HISTORY_CHAR_BUDGET = 100_000;
+
+  let prompt = formatMessages(missedMessages, TIMEZONE);
+  if (group.hostMode) {
+    const history = getChatHistory(chatJid, 50);
+    const missedIds = new Set(missedMessages.map((m) => m.id));
+    // Walk backwards (newest first), accumulate until budget is hit
+    const prior: typeof history = [];
+    let charCount = 0;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const m = history[i];
+      if (missedIds.has(m.id)) continue;
+      charCount += (m.content?.length ?? 0) + 50; // 50 chars overhead per message
+      if (charCount > HISTORY_CHAR_BUDGET) break;
+      prior.unshift(m);
+    }
+    if (prior.length > 0) {
+      const historyText = formatMessages(prior, TIMEZONE);
+      prompt = `[Conversation history — earlier messages for context]\n${historyText}\n[End of history — new messages below]\n${prompt}`;
+    }
+  }
+
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -311,7 +340,7 @@ async function runAgent(
     : undefined;
 
   try {
-    const output = await runContainerAgent(
+    const output = await (group.hostMode ? runHostAgent : runContainerAgent)(
       group,
       {
         prompt,
@@ -537,6 +566,26 @@ async function main(): Promise<void> {
   }
 
   // Channel callbacks (shared by all channels)
+  const dashboardService = new AgentDashboardService({
+    registeredGroups: () => registeredGroups,
+    sessions: () => sessions,
+    queueSnapshot: () => queue.getSnapshot(),
+    sendDirectiveToGroup: async (groupJid: string, text: string) => {
+      const timestamp = new Date().toISOString();
+      storeChatMetadata(groupJid, timestamp);
+      storeMessage({
+        id: `ag-pullback-${Date.now()}`,
+        chat_jid: groupJid,
+        sender: 'antigravity@local',
+        sender_name: 'Antigravity',
+        content: text,
+        timestamp,
+        is_from_me: false,
+        is_bot_message: false,
+      });
+    },
+  });
+
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
       // Remote control commands — intercept before storage
@@ -574,6 +623,16 @@ async function main(): Promise<void> {
       isGroup?: boolean,
     ) => storeChatMetadata(chatJid, timestamp, name, channel, isGroup),
     registeredGroups: () => registeredGroups,
+    registerGroup,
+    getAgentDashboard: () => dashboardService.getSnapshot(),
+    requestEffortChange: (threadId: string, targetEffort: 'low' | 'high') =>
+      dashboardService.requestEffortChange(threadId, targetEffort),
+    setAntigravityMapping: (groupJid: string, projectId: string) =>
+      dashboardService.setAntigravityMapping(groupJid, projectId),
+    getThreadTimeline: (threadId: string) =>
+      dashboardService.getThreadTimeline(threadId),
+    getThreadInspector: (threadId: string) =>
+      dashboardService.getThreadInspector(threadId),
   };
 
   // Create and connect all registered channels.
