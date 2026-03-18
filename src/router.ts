@@ -52,7 +52,11 @@ export function formatMessagesWithinBudget(
 ): { formatted: string; omittedCount: number; truncated: boolean } {
   const headerOnly = formatMessages([], timezone);
   if (Buffer.byteLength(headerOnly, 'utf8') > maxBytes) {
-    return { formatted: headerOnly, omittedCount: messages.length, truncated: false };
+    return {
+      formatted: headerOnly,
+      omittedCount: messages.length,
+      truncated: false,
+    };
   }
 
   const working = [...messages];
@@ -60,7 +64,10 @@ export function formatMessagesWithinBudget(
   let omittedCount = 0;
   let truncated = false;
 
-  while (working.length > 1 && Buffer.byteLength(formatted, 'utf8') > maxBytes) {
+  while (
+    working.length > 1 &&
+    Buffer.byteLength(formatted, 'utf8') > maxBytes
+  ) {
     working.shift();
     omittedCount += 1;
     formatted = formatMessages(working, timezone);

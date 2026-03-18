@@ -229,8 +229,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       prior.unshift(m);
     }
     if (prior.length > 0) {
-      const prefix =
-        '[Conversation history - earlier messages for context]\n';
+      const prefix = '[Conversation history - earlier messages for context]\n';
       const suffix = '\n[End of history - new messages below]\n';
       promptBudget -=
         Buffer.byteLength(prefix, 'utf8') +
