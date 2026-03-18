@@ -551,11 +551,53 @@ private func sendViaPasteboard(_ text: String, pid: pid_t) {
 }
 
 @discardableResult
+private func sendViaSystemEvents(_ text: String) -> Bool {
+  let pasteboard = NSPasteboard.general
+  let previous = pasteboard.string(forType: .string)
+  pasteboard.clearContents()
+  pasteboard.setString(text, forType: .string)
+
+  defer {
+    pasteboard.clearContents()
+    if let previous {
+      pasteboard.setString(previous, forType: .string)
+    }
+  }
+
+  let scriptSource = """
+  tell application "System Events"
+    keystroke "v" using command down
+    delay 0.12
+    key code 36
+  end tell
+  """
+
+  var errorDict: NSDictionary?
+  let script = NSAppleScript(source: scriptSource)
+  let result = script?.executeAndReturnError(&errorDict)
+
+  if let errorDict {
+    stderr("System Events send failed: \(errorDict)")
+    return false
+  }
+
+  return result != nil
+}
+
+@discardableResult
 private func performAction(_ element: AXUIElement, _ action: String) -> Bool {
   guard supportsAction(element, action) else {
     return false
   }
   return AXUIElementPerformAction(element, action as CFString) == .success
+}
+
+@discardableResult
+private func raiseWindow(_ window: AXUIElement?) -> Bool {
+  guard let window else {
+    return false
+  }
+  return performAction(window, kAXRaiseAction as String)
 }
 
 private func sendViaAccessibility(
@@ -781,6 +823,92 @@ private func findBestOCRHit(_ hits: [OCRHit], matching title: String) -> OCRHit?
   }
 }
 
+private func findComposerOCRHit(in image: CGImage) -> OCRHit? {
+  let candidates = recognizeOCRHits(on: image)
+  let patterns = [
+    "ask anything",
+    "@ to mention",
+    "/ for workflows",
+  ].map(normalizeForMatch)
+
+  return candidates.first { hit in
+    let normalized = normalizeForMatch(hit.text)
+    return patterns.contains { pattern in
+      normalized.contains(pattern) || pattern.contains(normalized)
+    }
+  }
+}
+
+private func extractVisibleLines(
+  app: NSRunningApplication,
+  appElement: AXUIElement,
+  config: CollectorConfig
+) -> [String] {
+  let focusedWindow =
+    copyAttributeValue(appElement, attribute: kAXFocusedWindowAttribute as String)
+      .map { $0 as! AXUIElement }
+  let windows =
+    (copyAttributeValue(appElement, attribute: kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
+  let rootWindow = focusedWindow ?? windows.first
+
+  var visited = Set<String>()
+  var lines: [String] = []
+
+  if let appName = app.localizedName, !appName.isEmpty {
+    lines.append(appName)
+  }
+
+  if let rootWindow {
+    walk(element: rootWindow, visited: &visited, lines: &lines)
+  }
+
+  var finalLines = lines
+    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    .filter { !$0.isEmpty }
+
+  if (rootWindow == nil || finalLines.count < 12),
+    let windowInfo = bestWindowInfo(for: app),
+    let windowNumber = windowInfo[kCGWindowNumber as String] as? NSNumber,
+    #available(macOS 14.0, *),
+    let image = captureWindowImage(windowId: CGWindowID(windowNumber.uint32Value))
+  {
+    let ocrLines = performOCR(on: image)
+    if ocrLines.count > max(finalLines.count - 1, 0) {
+      finalLines = [app.localizedName ?? config.appMatch] + ocrLines
+    }
+  }
+
+  return finalLines
+}
+
+private func visibleWindowContainsText(
+  app: NSRunningApplication,
+  appElement: AXUIElement,
+  config: CollectorConfig,
+  text: String,
+  attempts: Int = 4,
+  delayMicros: useconds_t = 350_000
+) -> Bool {
+  let normalizedTarget = normalizeForMatch(text)
+  guard !normalizedTarget.isEmpty else {
+    return false
+  }
+
+  for index in 0..<attempts {
+    if index > 0 {
+      usleep(delayMicros)
+    }
+
+    let lines = extractVisibleLines(app: app, appElement: appElement, config: config)
+    let normalizedVisible = normalizeForMatch(lines.joined(separator: " "))
+    if normalizedVisible.contains(normalizedTarget) {
+      return true
+    }
+  }
+
+  return false
+}
+
 let config = parseArgs()
 
 guard requestAccessibility(prompt: config.promptForAccessibility) else {
@@ -797,12 +925,17 @@ let appElement = AXUIElementCreateApplication(app.processIdentifier)
 let appPid = app.processIdentifier
 
 if let sendText = config.sendText {
+  app.activate(options: [])
+  usleep(300_000)
+
   let sendFocusedWindow =
     copyAttributeValue(appElement, attribute: kAXFocusedWindowAttribute as String)
       .map { $0 as! AXUIElement }
   let sendWindows =
     (copyAttributeValue(appElement, attribute: kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
   let sendRootWindow = sendFocusedWindow ?? sendWindows.first
+  _ = raiseWindow(sendRootWindow)
+  usleep(180_000)
   let sendWindowInfo = bestWindowInfo(for: app)
 
   if let conversationTitle = config.conversationTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -851,20 +984,55 @@ if let sendText = config.sendText {
     let composer = findComposerElement(appElement: appElement, root: refreshedRootWindow)
   {
     if sendViaAccessibility(root: refreshedRootWindow, composer: composer, text: sendText) {
-      print("sent")
-      exit(0)
+      if visibleWindowContainsText(
+        app: app,
+        appElement: appElement,
+        config: config,
+        text: sendText
+      ) {
+        print("sent")
+        exit(0)
+      }
+      stderr("Antigravity send attempt completed, but the message was not visible afterward. Delivery is unverified.")
+      exit(11)
     }
 
     if let frame = copyFrame(composer) {
       leftClick(at: CGPoint(x: frame.midX, y: frame.midY), pid: appPid)
       usleep(180_000)
       sendViaPasteboard(sendText, pid: appPid)
-      print("sent")
-      exit(0)
+      if visibleWindowContainsText(
+        app: app,
+        appElement: appElement,
+        config: config,
+        text: sendText
+      ) {
+        print("sent")
+        exit(0)
+      }
+      if sendViaSystemEvents(sendText) && visibleWindowContainsText(
+        app: app,
+        appElement: appElement,
+        config: config,
+        text: sendText
+      ) {
+        print("sent")
+        exit(0)
+      }
+      stderr("Antigravity paste/send attempt completed, but the message was not visible afterward. Delivery is unverified.")
+      exit(11)
     }
   }
 
   if let sendWindowInfo, let sendBounds = windowBounds(from: sendWindowInfo) {
+    if
+      #available(macOS 14.0, *),
+      let windowNumber = sendWindowInfo[kCGWindowNumber as String] as? NSNumber,
+      let image = captureWindowImage(windowId: CGWindowID(windowNumber.uint32Value)),
+      let composerHit = findComposerOCRHit(in: image)
+    {
+      leftClick(at: screenPoint(for: composerHit, in: sendBounds), pid: appPid)
+    } else {
     leftClick(
       at: CGPoint(
         x: sendBounds.midX,
@@ -872,49 +1040,36 @@ if let sendText = config.sendText {
       ),
       pid: appPid
     )
+    }
     usleep(180_000)
     sendViaPasteboard(sendText, pid: appPid)
-    print("sent")
-    exit(0)
+    if visibleWindowContainsText(
+      app: app,
+      appElement: appElement,
+      config: config,
+      text: sendText
+    ) {
+      print("sent")
+      exit(0)
+    }
+    if sendViaSystemEvents(sendText) && visibleWindowContainsText(
+      app: app,
+      appElement: appElement,
+      config: config,
+      text: sendText
+    ) {
+      print("sent")
+      exit(0)
+    }
+    stderr("Antigravity fallback paste/send attempt completed, but the message was not visible afterward. Delivery is unverified.")
+    exit(11)
   }
 
   stderr("Could not find or target the Antigravity message composer in the current unitybox session.")
   exit(9)
 }
 
-let focusedWindow =
-  copyAttributeValue(appElement, attribute: kAXFocusedWindowAttribute as String)
-    .map { $0 as! AXUIElement }
-let windows =
-  (copyAttributeValue(appElement, attribute: kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
-let rootWindow = focusedWindow ?? windows.first
-
-var visited = Set<String>()
-var lines: [String] = []
-
-if let appName = app.localizedName, !appName.isEmpty {
-  lines.append(appName)
-}
-
-if let rootWindow {
-  walk(element: rootWindow, visited: &visited, lines: &lines)
-}
-
-var finalLines = lines
-  .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-  .filter { !$0.isEmpty }
-
-if (rootWindow == nil || finalLines.count < 12),
-  let windowInfo = bestWindowInfo(for: app),
-  let windowNumber = windowInfo[kCGWindowNumber as String] as? NSNumber,
-  #available(macOS 14.0, *),
-  let image = captureWindowImage(windowId: CGWindowID(windowNumber.uint32Value))
-{
-  let ocrLines = performOCR(on: image)
-  if ocrLines.count > max(finalLines.count - 1, 0) {
-    finalLines = [app.localizedName ?? config.appMatch] + ocrLines
-  }
-}
+let finalLines = extractVisibleLines(app: app, appElement: appElement, config: config)
 
 if finalLines.isEmpty {
   stderr("No visible text was extracted from '\(app.localizedName ?? config.appMatch)'.")
