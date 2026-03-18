@@ -4,6 +4,7 @@ import { ASSISTANT_NAME, TRIGGER_PATTERN } from './config.js';
 import {
   escapeXml,
   formatMessages,
+  formatMessagesWithinBudget,
   formatOutbound,
   stripInternalTags,
 } from './router.js';
@@ -120,6 +121,40 @@ describe('formatMessages', () => {
     expect(result).toContain('1:30');
     expect(result).toContain('PM');
     expect(result).toContain('<context timezone="America/New_York" />');
+  });
+
+  it('drops oldest messages to stay within the given byte budget', () => {
+    const messages = [
+      makeMsg({ id: '1', content: 'old message '.repeat(120) }),
+      makeMsg({ id: '2', content: 'new message that must remain visible' }),
+    ];
+    const full = formatMessages(messages, TZ);
+    const budget = Buffer.byteLength(full, 'utf8') - 1200;
+
+    const result = formatMessagesWithinBudget(messages, TZ, budget);
+
+    expect(Buffer.byteLength(result.formatted, 'utf8')).toBeLessThanOrEqual(
+      budget,
+    );
+    expect(result.formatted).not.toContain('old message');
+    expect(result.formatted).toContain('new message that must remain visible');
+    expect(result.omittedCount).toBe(1);
+    expect(result.truncated).toBe(false);
+  });
+
+  it('truncates the newest message when a single message still exceeds the budget', () => {
+    const message = makeMsg({ content: 'A'.repeat(4000) });
+    const bare = formatMessages([{ ...message, content: '' }], TZ);
+    const budget = Buffer.byteLength(bare, 'utf8') + 120;
+
+    const result = formatMessagesWithinBudget([message], TZ, budget);
+
+    expect(Buffer.byteLength(result.formatted, 'utf8')).toBeLessThanOrEqual(
+      budget,
+    );
+    expect(result.formatted).toContain('[truncated]');
+    expect(result.omittedCount).toBe(0);
+    expect(result.truncated).toBe(true);
   });
 });
 

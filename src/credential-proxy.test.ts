@@ -234,7 +234,7 @@ describe('credential-proxy', () => {
   it('rejects oversized local model messages requests before LM Studio sees them', async () => {
     proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
 
-    const huge = 'x'.repeat(90_000);
+    const huge = 'x'.repeat(130_000);
     const res = await makeRequest(
       proxyPort,
       {
@@ -249,7 +249,7 @@ describe('credential-proxy', () => {
       }),
     );
 
-    expect(res.statusCode).toBe(413);
+    expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.body).error.message).toContain(
       'Prompt exceeds the safe local-model context budget',
     );

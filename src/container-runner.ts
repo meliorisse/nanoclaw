@@ -746,7 +746,7 @@ export async function runHostAgent(
     // Claude Code settings
     CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
     CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1',
-    CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0',
+    CLAUDE_CODE_DISABLE_AUTO_MEMORY: input.isScheduledTask ? '1' : '0',
     // Match the max_tokens cap we enforce in the credential proxy so the
     // SDK doesn't flag responses as exceeding its internal output limit.
     CLAUDE_CODE_MAX_OUTPUT_TOKENS: '4000',

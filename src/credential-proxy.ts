@@ -18,15 +18,23 @@ import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
 const MAX_OUTPUT_TOKENS = 4000;
-const LOCAL_MODEL_INPUT_TOKEN_LIMIT = 28000;
+const LOCAL_MODEL_INPUT_TOKEN_LIMIT = 31000;
 
 function estimateLocalModelInputTokens(body: Record<string, unknown>): number {
   // Conservative heuristic for Anthropic-style payloads headed to LM Studio.
-  // XML-like prompts, tool schemas, and escaped content tend to tokenize more
-  // densely than plain English, so use ~3 chars/token instead of ~4.
-  return Math.ceil(JSON.stringify(body).length / 3);
+  // Tool schemas and escaped XML-like prompts tokenize denser than plain
+  // English, but using 3 chars/token turned out to reject workable requests
+  // once the scheduled-task tool surface was slimmed down. 3.6 keeps a
+  // meaningful safety margin while still allowing prompts that fit 32k models.
+  return Math.ceil(JSON.stringify(body).length / 3.6);
 }
 import { handleAnthropicTranslation } from './anthropic-openai-translator.js';
+
+function estimateSectionBytes(value: unknown): number {
+  if (value === undefined) return 0;
+  if (typeof value === 'string') return Buffer.byteLength(value, 'utf8');
+  return Buffer.byteLength(JSON.stringify(value), 'utf8');
+}
 
 export type AuthMode = 'api-key' | 'oauth';
 
@@ -117,10 +125,32 @@ export function startCredentialProxy(
                   url: req.url,
                   estimatedInputTokens,
                   limit: LOCAL_MODEL_INPUT_TOKEN_LIMIT,
+                  bodyBytes: Buffer.byteLength(JSON.stringify(parsed), 'utf8'),
+                  messageCount: Array.isArray(parsed.messages)
+                    ? parsed.messages.length
+                    : 0,
+                  toolsCount: Array.isArray(parsed.tools)
+                    ? parsed.tools.length
+                    : 0,
+                  toolNames: Array.isArray(parsed.tools)
+                    ? parsed.tools
+                        .map((tool) =>
+                          typeof tool === 'object' &&
+                          tool !== null &&
+                          'name' in tool &&
+                          typeof tool.name === 'string'
+                            ? tool.name
+                            : 'unknown',
+                        )
+                        .slice(0, 40)
+                    : [],
+                  systemBytes: estimateSectionBytes(parsed.system),
+                  messagesBytes: estimateSectionBytes(parsed.messages),
+                  toolsBytes: estimateSectionBytes(parsed.tools),
                 },
                 'Rejected oversized local-model request before forwarding to LM Studio',
               );
-              res.writeHead(413, { 'content-type': 'application/json' });
+              res.writeHead(400, { 'content-type': 'application/json' });
               res.end(
                 JSON.stringify({
                   type: 'error',

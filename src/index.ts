@@ -47,7 +47,12 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import {
+  findChannel,
+  formatMessages,
+  formatMessagesWithinBudget,
+  formatOutbound,
+} from './router.js';
 import { AgentDashboardService } from './agent-dashboard.js';
 import {
   restoreRemoteControl,
@@ -66,6 +71,9 @@ import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
+
+const HOST_PROMPT_BYTE_BUDGET = 64 * 1024;
+const ACTIVE_HOST_MESSAGE_BYTE_BUDGET = 32 * 1024;
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -190,7 +198,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // leaving room for the SDK's system/tool scaffolding plus the active turn.
   const HISTORY_CHAR_BUDGET = 18_000;
 
-  let prompt = formatMessages(missedMessages, TIMEZONE);
+  let promptBudget = HOST_PROMPT_BYTE_BUDGET;
+  const currentPrompt = formatMessagesWithinBudget(
+    missedMessages,
+    TIMEZONE,
+    promptBudget,
+  );
+  let prompt = currentPrompt.formatted;
+  if (currentPrompt.omittedCount > 0 || currentPrompt.truncated) {
+    logger.warn(
+      {
+        group: group.name,
+        omittedCount: currentPrompt.omittedCount,
+        truncated: currentPrompt.truncated,
+      },
+      'Trimmed active host prompt to stay within byte budget',
+    );
+  }
   if (group.hostMode) {
     const history = getChatHistory(chatJid, 50);
     const missedIds = new Set(missedMessages.map((m) => m.id));
@@ -205,8 +229,31 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       prior.unshift(m);
     }
     if (prior.length > 0) {
-      const historyText = formatMessages(prior, TIMEZONE);
-      prompt = `[Conversation history — earlier messages for context]\n${historyText}\n[End of history — new messages below]\n${prompt}`;
+      const prefix =
+        '[Conversation history - earlier messages for context]\n';
+      const suffix = '\n[End of history - new messages below]\n';
+      promptBudget -=
+        Buffer.byteLength(prefix, 'utf8') +
+        Buffer.byteLength(suffix, 'utf8') +
+        Buffer.byteLength(prompt, 'utf8');
+      if (promptBudget > 0) {
+        const historyPrompt = formatMessagesWithinBudget(
+          prior,
+          TIMEZONE,
+          promptBudget,
+        );
+        if (historyPrompt.omittedCount > 0 || historyPrompt.truncated) {
+          logger.warn(
+            {
+              group: group.name,
+              omittedCount: historyPrompt.omittedCount,
+              truncated: historyPrompt.truncated,
+            },
+            'Trimmed host conversation history to stay within byte budget',
+          );
+        }
+        prompt = `${prefix}${historyPrompt.formatted}${suffix}${prompt}`;
+      }
     }
   }
 
@@ -446,7 +493,30 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
-          const formatted = formatMessages(messagesToSend, TIMEZONE);
+          const formattedResult = group.hostMode
+            ? formatMessagesWithinBudget(
+                messagesToSend,
+                TIMEZONE,
+                ACTIVE_HOST_MESSAGE_BYTE_BUDGET,
+              )
+            : {
+                formatted: formatMessages(messagesToSend, TIMEZONE),
+                omittedCount: 0,
+                truncated: false,
+              };
+          const formatted = formattedResult.formatted;
+
+          if (formattedResult.omittedCount > 0 || formattedResult.truncated) {
+            logger.warn(
+              {
+                chatJid,
+                group: group.name,
+                omittedCount: formattedResult.omittedCount,
+                truncated: formattedResult.truncated,
+              },
+              'Trimmed piped host-mode messages to stay within byte budget',
+            );
+          }
 
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(

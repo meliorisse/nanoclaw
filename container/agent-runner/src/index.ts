@@ -54,6 +54,30 @@ interface SDKUserMessage {
   session_id: string;
 }
 
+const INTERACTIVE_ALLOWED_TOOLS = [
+  'Bash',
+  'Read',
+  'Write',
+  'Edit',
+  'Glob',
+  'Grep',
+  'WebSearch',
+  'WebFetch',
+  'Agent',
+  'TaskOutput',
+  'TaskStop',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'TodoWrite',
+  'AskUserQuestion',
+  'Skill',
+  'mcp__nanoclaw__*',
+];
+
+const SCHEDULED_TASK_ALLOWED_TOOLS = [
+  'Bash',
+];
+
 // Paths — configurable via env vars for host mode, fall back to Docker defaults
 const WORKSPACE_GROUP  = process.env.NANOCLAW_GROUP_PATH    || '/workspace/group';
 const WORKSPACE_GLOBAL = process.env.NANOCLAW_GLOBAL_DIR     || '/workspace/global';
@@ -393,6 +417,40 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  const isScheduledTask = containerInput.isScheduledTask === true;
+  const allowedTools = isScheduledTask
+    ? SCHEDULED_TASK_ALLOWED_TOOLS
+    : INTERACTIVE_ALLOWED_TOOLS;
+  const tools = isScheduledTask ? SCHEDULED_TASK_ALLOWED_TOOLS : undefined;
+  const mcpServers = isScheduledTask
+    ? undefined
+    : {
+        nanoclaw: {
+          command: process.env.NANOCLAW_NODE_PATH || 'node',
+          args: [mcpServerPath],
+          env: {
+            NANOCLAW_CHAT_JID: containerInput.chatJid,
+            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
+            NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
+            ...(process.env.NANOCLAW_IPC_MESSAGES_DIR
+              ? {
+                  NANOCLAW_IPC_MESSAGES_DIR: process.env.NANOCLAW_IPC_MESSAGES_DIR,
+                  NANOCLAW_IPC_TASKS_DIR: process.env.NANOCLAW_IPC_TASKS_DIR,
+                }
+              : {}),
+          },
+        },
+      };
+  const hooks = isScheduledTask
+    ? undefined
+    : {
+        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
+      };
+
+  if (isScheduledTask) {
+    log('Using lean scheduled-task query profile');
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -403,42 +461,14 @@ async function runQuery(
       systemPrompt: globalClaudeMd
         ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
         : undefined,
-      allowedTools: [
-        // Core file + shell tools
-        'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep',
-        // Web tools
-        'WebSearch', 'WebFetch',
-        // Sub-agent management (claude SDK)
-        'Agent', 'TaskOutput', 'TaskStop',
-        // Planning + UX
-        'EnterPlanMode', 'ExitPlanMode',
-        'TodoWrite', 'AskUserQuestion', 'Skill',
-        // Nanoclaw scheduling + messaging (via MCP)
-        'mcp__nanoclaw__*',
-      ],
+      allowedTools,
+      tools,
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
-      settingSources: ['project', 'user'],
-      mcpServers: {
-        nanoclaw: {
-          command: process.env.NANOCLAW_NODE_PATH || 'node',
-          args: [mcpServerPath],
-          env: {
-            NANOCLAW_CHAT_JID: containerInput.chatJid,
-            NANOCLAW_GROUP_FOLDER: containerInput.groupFolder,
-            NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
-            // IPC dirs for host mode — ipc-watcher reads from messages/ and tasks/ dirs
-            ...(process.env.NANOCLAW_IPC_MESSAGES_DIR ? {
-              NANOCLAW_IPC_MESSAGES_DIR: process.env.NANOCLAW_IPC_MESSAGES_DIR,
-              NANOCLAW_IPC_TASKS_DIR: process.env.NANOCLAW_IPC_TASKS_DIR,
-            } : {}),
-          },
-        },
-      },
-      hooks: {
-        PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-      },
+      settingSources: isScheduledTask ? ['project'] : ['project', 'user'],
+      mcpServers,
+      hooks,
     }
   })) {
     messageCount++;
