@@ -191,8 +191,29 @@ private func copyActionNames(_ element: AXUIElement) -> [String] {
   return names
 }
 
+private func copySettableAttributeNames(_ element: AXUIElement) -> [String] {
+  var names: CFArray?
+  let result = AXUIElementCopyAttributeNames(element, &names)
+  guard result == .success, let attributes = names as? [String] else {
+    return []
+  }
+  return attributes.filter { attribute in
+    var settable = DarwinBoolean(false)
+    let outcome = AXUIElementIsAttributeSettable(
+      element,
+      attribute as CFString,
+      &settable
+    )
+    return outcome == .success && settable.boolValue
+  }
+}
+
+private func supportsAction(_ element: AXUIElement, _ action: String) -> Bool {
+  copyActionNames(element).contains(action)
+}
+
 private func supportsPress(_ element: AXUIElement) -> Bool {
-  copyActionNames(element).contains(kAXPressAction as String)
+  supportsAction(element, kAXPressAction as String)
 }
 
 private func nearestPressableElement(for element: AXUIElement) -> AXUIElement? {
@@ -218,24 +239,36 @@ private func isEditableRole(_ role: String?) -> Bool {
     role == "AXComboBox"
 }
 
-private func leftClick(at point: CGPoint) {
+private func postEvent(_ event: CGEvent?, to pid: pid_t?) {
+  guard let event else {
+    return
+  }
+
+  if let pid {
+    event.postToPid(pid)
+  } else {
+    event.post(tap: .cghidEventTap)
+  }
+}
+
+private func leftClick(at point: CGPoint, pid: pid_t? = nil) {
   let source = CGEventSource(stateID: .combinedSessionState)
   let move = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)
   let down = CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: point, mouseButton: .left)
   let up = CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: point, mouseButton: .left)
-  move?.post(tap: .cghidEventTap)
-  down?.post(tap: .cghidEventTap)
-  up?.post(tap: .cghidEventTap)
+  postEvent(move, to: pid)
+  postEvent(down, to: pid)
+  postEvent(up, to: pid)
 }
 
-private func postKeyboardEvent(keyCode: CGKeyCode, flags: CGEventFlags = []) {
+private func postKeyboardEvent(keyCode: CGKeyCode, flags: CGEventFlags = [], pid: pid_t? = nil) {
   let source = CGEventSource(stateID: .combinedSessionState)
   let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
   let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
   down?.flags = flags
   up?.flags = flags
-  down?.post(tap: .cghidEventTap)
-  up?.post(tap: .cghidEventTap)
+  postEvent(down, to: pid)
+  postEvent(up, to: pid)
 }
 
 private func pressElement(_ element: AXUIElement) -> Bool {
@@ -290,7 +323,8 @@ private func collectElements(
 
 private func findConversationTarget(
   root: AXUIElement,
-  title: String
+  title: String,
+  requirePressable: Bool = false
 ) -> AXUIElement? {
   let normalizedTarget = normalizeForMatch(title)
   guard !normalizedTarget.isEmpty else {
@@ -319,7 +353,8 @@ private func findConversationTarget(
     }
 
     guard bestStringScore > 0 else { continue }
-    guard let target = nearestPressableElement(for: element) ?? (copyFrame(element) != nil ? element : nil) else {
+    let target = nearestPressableElement(for: element) ?? (requirePressable ? nil : (copyFrame(element) != nil ? element : nil))
+    guard let target else {
       continue
     }
 
@@ -341,6 +376,65 @@ private func findConversationTarget(
   }
 
   return best?.element
+}
+
+private func windowContainsText(
+  _ root: AXUIElement,
+  matching title: String
+) -> Bool {
+  let normalizedTarget = normalizeForMatch(title)
+  guard !normalizedTarget.isEmpty else {
+    return false
+  }
+
+  var visited = Set<String>()
+  var elements: [AXUIElement] = []
+  collectElements(from: root, visited: &visited, output: &elements)
+
+  for element in elements {
+    for string in copyStringValues(element) {
+      let normalized = normalizeForMatch(string)
+      if normalized == normalizedTarget ||
+        normalized.contains(normalizedTarget) ||
+        normalizedTarget.contains(normalized)
+      {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+private func windowImageContainsText(
+  windowInfo: [String: Any]?,
+  matching title: String
+) -> Bool {
+  guard
+    let windowInfo,
+    #available(macOS 14.0, *),
+    let windowNumber = windowInfo[kCGWindowNumber as String] as? NSNumber,
+    let image = captureWindowImage(windowId: CGWindowID(windowNumber.uint32Value))
+  else {
+    return false
+  }
+
+  let normalizedTarget = normalizeForMatch(title)
+  guard !normalizedTarget.isEmpty else {
+    return false
+  }
+
+  for hit in recognizeOCRHits(on: image) {
+    let normalized = normalizeForMatch(hit.text)
+    if normalized == normalizedTarget ||
+      normalized.contains(normalizedTarget) ||
+      normalizedTarget.contains(normalized)
+    {
+      return true
+    }
+  }
+
+  return false
 }
 
 private func findComposerElement(
@@ -374,21 +468,119 @@ private func findComposerElement(
     .first?.0
 }
 
-private func sendViaPasteboard(_ text: String) {
+private func findSendButton(
+  root: AXUIElement,
+  relativeTo composer: AXUIElement
+) -> AXUIElement? {
+  guard let composerFrame = copyFrame(composer) else {
+    return nil
+  }
+
+  let targetPoint = CGPoint(x: composerFrame.maxX, y: composerFrame.midY)
+  var visited = Set<String>()
+  var elements: [AXUIElement] = []
+  collectElements(from: root, visited: &visited, output: &elements)
+
+  let candidates = elements.compactMap { element -> (AXUIElement, CGRect, Double)? in
+    guard supportsPress(element), let frame = copyFrame(element) else {
+      return nil
+    }
+
+    let role = copyRole(element) ?? ""
+    guard role == "AXButton" || role == "AXGroup" else {
+      return nil
+    }
+
+    let verticalDistance = abs(frame.midY - targetPoint.y)
+    guard verticalDistance <= max(composerFrame.height * 0.8, 72) else {
+      return nil
+    }
+
+    guard frame.minX >= composerFrame.maxX - max(composerFrame.width * 0.35, 240) else {
+      return nil
+    }
+
+    let distance = Double(hypot(frame.midX - targetPoint.x, frame.midY - targetPoint.y))
+    return (element, frame, distance)
+  }
+
+  return candidates
+    .sorted { lhs, rhs in lhs.2 < rhs.2 }
+    .first?.0
+}
+
+@discardableResult
+private func focusElement(_ element: AXUIElement) -> Bool {
+  AXUIElementSetAttributeValue(
+    element,
+    kAXFocusedAttribute as CFString,
+    kCFBooleanTrue
+  ) == .success
+}
+
+@discardableResult
+private func setTextValue(_ text: String, on element: AXUIElement) -> Bool {
+  let settableAttributes = Set(copySettableAttributeNames(element))
+
+  guard settableAttributes.contains(kAXValueAttribute as String) else {
+    return false
+  }
+
+  return AXUIElementSetAttributeValue(
+    element,
+    kAXValueAttribute as CFString,
+    text as CFTypeRef
+  ) == .success
+}
+
+private func sendViaPasteboard(_ text: String, pid: pid_t) {
   let pasteboard = NSPasteboard.general
   let previous = pasteboard.string(forType: .string)
   pasteboard.clearContents()
   pasteboard.setString(text, forType: .string)
   usleep(120_000)
-  postKeyboardEvent(keyCode: 9, flags: .maskCommand) // v
+  postKeyboardEvent(keyCode: 9, flags: .maskCommand, pid: pid) // v
   usleep(120_000)
-  postKeyboardEvent(keyCode: 36) // return
+  postKeyboardEvent(keyCode: 36, pid: pid) // return
   usleep(120_000)
 
   pasteboard.clearContents()
   if let previous {
     pasteboard.setString(previous, forType: .string)
   }
+}
+
+@discardableResult
+private func performAction(_ element: AXUIElement, _ action: String) -> Bool {
+  guard supportsAction(element, action) else {
+    return false
+  }
+  return AXUIElementPerformAction(element, action as CFString) == .success
+}
+
+private func sendViaAccessibility(
+  root: AXUIElement,
+  composer: AXUIElement,
+  text: String
+) -> Bool {
+  _ = focusElement(composer)
+  usleep(120_000)
+
+  guard setTextValue(text, on: composer) else {
+    return false
+  }
+
+  usleep(120_000)
+
+  if performAction(composer, "AXConfirm") {
+    return true
+  }
+
+  guard let sendButton = findSendButton(root: root, relativeTo: composer) else {
+    return false
+  }
+
+  return pressElement(sendButton)
 }
 
 private func elementKey(_ element: AXUIElement) -> String {
@@ -602,11 +794,9 @@ guard let app = bestRunningApp(matching: config.appMatch) else {
 }
 
 let appElement = AXUIElementCreateApplication(app.processIdentifier)
+let appPid = app.processIdentifier
 
 if let sendText = config.sendText {
-  app.activate(options: [.activateIgnoringOtherApps])
-  usleep(350_000)
-
   let sendFocusedWindow =
     copyAttributeValue(appElement, attribute: kAXFocusedWindowAttribute as String)
       .map { $0 as! AXUIElement }
@@ -619,7 +809,18 @@ if let sendText = config.sendText {
     !conversationTitle.isEmpty
   {
     if let sendRootWindow,
-      let target = findConversationTarget(root: sendRootWindow, title: conversationTitle)
+      windowContainsText(sendRootWindow, matching: conversationTitle)
+    {
+      // Already viewing the requested conversation; avoid any selection click/press.
+    } else if windowImageContainsText(windowInfo: sendWindowInfo, matching: conversationTitle)
+    {
+      // Already viewing the requested conversation; avoid any selection click/press.
+    } else if let sendRootWindow,
+      let target = findConversationTarget(
+        root: sendRootWindow,
+        title: conversationTitle,
+        requirePressable: true
+      )
     {
       guard pressElement(target) else {
         stderr("Found '\(conversationTitle)' but could not activate it.")
@@ -633,9 +834,9 @@ if let sendText = config.sendText {
       let image = captureWindowImage(windowId: CGWindowID(windowNumber.uint32Value)),
       let hit = findBestOCRHit(recognizeOCRHits(on: image), matching: conversationTitle)
     {
-      leftClick(at: screenPoint(for: hit, in: sendBounds))
+      leftClick(at: screenPoint(for: hit, in: sendBounds), pid: appPid)
     } else {
-      stderr("Could not find a selectable Antigravity conversation titled '\(conversationTitle)'. Open it in Antigravity first or keep it visible in the sidebar.")
+      stderr("Could not find Antigravity conversation titled '\(conversationTitle)' in the current unitybox session.")
       exit(6)
     }
 
@@ -646,32 +847,39 @@ if let sendText = config.sendText {
     copyAttributeValue(appElement, attribute: kAXFocusedWindowAttribute as String)
       .map { $0 as! AXUIElement } ?? sendRootWindow
 
-  guard let composer = findComposerElement(appElement: appElement, root: refreshedRootWindow) else {
-    if let sendWindowInfo, let sendBounds = windowBounds(from: sendWindowInfo) {
-      leftClick(
-        at: CGPoint(
-          x: sendBounds.midX,
-          y: sendBounds.maxY - 56
-        )
-      )
-      usleep(180_000)
-      sendViaPasteboard(sendText)
+  if let refreshedRootWindow,
+    let composer = findComposerElement(appElement: appElement, root: refreshedRootWindow)
+  {
+    if sendViaAccessibility(root: refreshedRootWindow, composer: composer, text: sendText) {
       print("sent")
       exit(0)
     }
 
-    stderr("Could not find the Antigravity message composer.")
-    exit(8)
+    if let frame = copyFrame(composer) {
+      leftClick(at: CGPoint(x: frame.midX, y: frame.midY), pid: appPid)
+      usleep(180_000)
+      sendViaPasteboard(sendText, pid: appPid)
+      print("sent")
+      exit(0)
+    }
   }
 
-  if let frame = copyFrame(composer) {
-    leftClick(at: CGPoint(x: frame.midX, y: frame.midY))
+  if let sendWindowInfo, let sendBounds = windowBounds(from: sendWindowInfo) {
+    leftClick(
+      at: CGPoint(
+        x: sendBounds.midX,
+        y: sendBounds.maxY - 56
+      ),
+      pid: appPid
+    )
     usleep(180_000)
+    sendViaPasteboard(sendText, pid: appPid)
+    print("sent")
+    exit(0)
   }
 
-  sendViaPasteboard(sendText)
-  print("sent")
-  exit(0)
+  stderr("Could not find or target the Antigravity message composer in the current unitybox session.")
+  exit(9)
 }
 
 let focusedWindow =

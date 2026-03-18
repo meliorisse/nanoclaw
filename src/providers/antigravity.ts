@@ -561,6 +561,31 @@ export class AntigravityProvider {
           { err, threadId: thread.id },
           'Helper-based send to Antigravity thread failed',
         );
+
+        if (err instanceof Error) {
+          const commandError = err as Error & {
+            stderr?: string;
+            stdout?: string;
+          };
+          const detail =
+            commandError.stderr?.trim() ||
+            commandError.stdout?.trim() ||
+            commandError.message;
+
+          return {
+            ok: false,
+            threadId: thread.id,
+            message: detail
+              ? `Antigravity send failed safely: ${detail}`
+              : `Antigravity send failed safely for "${thread.title}".`,
+          };
+        }
+
+        return {
+          ok: false,
+          threadId: thread.id,
+          message: `Antigravity send failed safely for "${thread.title}".`,
+        };
       }
     }
 
