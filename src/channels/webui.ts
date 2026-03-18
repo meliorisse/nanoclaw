@@ -302,7 +302,11 @@ class WebuiChannel implements Channel {
         text?: string;
       };
 
-      if (!data.threadId || typeof data.text !== 'string' || !data.text.trim()) {
+      if (
+        !data.threadId ||
+        typeof data.text !== 'string' ||
+        !data.text.trim()
+      ) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -313,7 +317,10 @@ class WebuiChannel implements Channel {
         return;
       }
 
-      const result = await this.opts.sendThreadMessage(data.threadId, data.text);
+      const result = await this.opts.sendThreadMessage(
+        data.threadId,
+        data.text,
+      );
 
       res.writeHead(result.ok ? 200 : 409, {
         'Content-Type': 'application/json',

@@ -540,7 +540,8 @@ export class AntigravityProvider {
   ): Promise<ThreadMessageResult> {
     const metadata = this.parseMetadata(thread.metadataJson);
     const conversationId =
-      (typeof metadata.conversationId === 'string' && metadata.conversationId) ||
+      (typeof metadata.conversationId === 'string' &&
+        metadata.conversationId) ||
       null;
 
     if (!conversationId) {
