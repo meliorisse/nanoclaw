@@ -561,6 +561,25 @@ export function listAgentThreads(): AgentThread[] {
   }));
 }
 
+export function deleteAgentThreads(ids: string[]): void {
+  if (ids.length === 0) {
+    return;
+  }
+
+  const deleteThread = db.prepare('DELETE FROM agent_threads WHERE id = ?');
+  const deleteActions = db.prepare(
+    'DELETE FROM agent_thread_actions WHERE thread_id = ?',
+  );
+  const transaction = db.transaction((threadIds: string[]) => {
+    for (const id of threadIds) {
+      deleteActions.run(id);
+      deleteThread.run(id);
+    }
+  });
+
+  transaction(ids);
+}
+
 export function setAgentThreadDesiredEffort(
   id: string,
   desiredEffort: AgentThread['desiredEffort'],

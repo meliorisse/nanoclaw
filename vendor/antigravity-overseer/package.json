@@ -1,0 +1,17 @@
+{
+  "name": "antigravity-overseer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local supervisory stack for Antigravity using only the exposed macOS window UI.",
+  "scripts": {
+    "migrate": "node --experimental-strip-types src/db/migrate.ts",
+    "watcher": "node --experimental-strip-types src/watcher/watcher.ts",
+    "mcp": "node --experimental-strip-types src/mcp/server.ts",
+    "doctor": "node --experimental-strip-types src/doctor.ts",
+    "test": "node --experimental-strip-types --test tests/**/*.test.ts"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

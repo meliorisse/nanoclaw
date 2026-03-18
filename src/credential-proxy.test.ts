@@ -189,4 +189,69 @@ describe('credential-proxy', () => {
     expect(res.statusCode).toBe(502);
     expect(res.body).toBe('Bad Gateway');
   });
+
+  it('caps max_tokens for local model messages requests', async () => {
+    Object.assign(mockEnv, {
+      ANTHROPIC_API_KEY: 'sk-ant-real-key',
+      ANTHROPIC_BASE_URL: `http://127.0.0.1:${upstreamPort}`,
+    });
+
+    let lastBody = '';
+    await new Promise<void>((resolve) => upstreamServer.close(() => resolve()));
+    upstreamServer = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk) => chunks.push(chunk));
+      req.on('end', () => {
+        lastBody = Buffer.concat(chunks).toString();
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      });
+    });
+    await new Promise<void>((resolve) =>
+      upstreamServer.listen(upstreamPort, '127.0.0.1', resolve),
+    );
+
+    proxyServer = await startCredentialProxy(0);
+    proxyPort = (proxyServer.address() as AddressInfo).port;
+
+    await makeRequest(
+      proxyPort,
+      {
+        method: 'POST',
+        path: '/v1/messages',
+        headers: { 'content-type': 'application/json' },
+      },
+      JSON.stringify({
+        model: 'local-model',
+        max_tokens: 32000,
+        messages: [{ role: 'user', content: 'hello' }],
+      }),
+    );
+
+    expect(JSON.parse(lastBody).max_tokens).toBe(4000);
+  });
+
+  it('rejects oversized local model messages requests before LM Studio sees them', async () => {
+    proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
+
+    const huge = 'x'.repeat(90_000);
+    const res = await makeRequest(
+      proxyPort,
+      {
+        method: 'POST',
+        path: '/v1/messages',
+        headers: { 'content-type': 'application/json' },
+      },
+      JSON.stringify({
+        model: 'local-model',
+        max_tokens: 4000,
+        messages: [{ role: 'user', content: huge }],
+      }),
+    );
+
+    expect(res.statusCode).toBe(413);
+    expect(JSON.parse(res.body).error.message).toContain(
+      'Prompt exceeds the safe local-model context budget',
+    );
+  });
 });

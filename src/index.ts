@@ -185,10 +185,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // For hostMode groups, sessions are stateless — prepend recent conversation
   // history so the agent has context about previous exchanges.
-  // Budget: ~40k chars ≈ 10k tokens for history. System prompts + tool
-  // definitions from the claude binary add another ~15-20k tokens, so this
-  // keeps the total well under the 32k context window.
-  const HISTORY_CHAR_BUDGET = 100_000;
+  // Keep this intentionally conservative for 32k local-model contexts:
+  // ~18k chars of XML-formatted history is roughly 5-7k tokens once escaped,
+  // leaving room for the SDK's system/tool scaffolding plus the active turn.
+  const HISTORY_CHAR_BUDGET = 18_000;
 
   let prompt = formatMessages(missedMessages, TIMEZONE);
   if (group.hostMode) {

@@ -5,6 +5,7 @@ import {
   setRegisteredGroup,
   storeChatMetadata,
   storeMessage,
+  upsertAgentThread,
 } from './db.js';
 import { buildLocalThreads, sortThreads } from './agent-dashboard.js';
 import { extractTrailingJson } from './providers/antigravity.js';
@@ -492,5 +493,68 @@ describe('agent dashboard scaffolding', () => {
     expect(inspector.summary).toMatch(/evidence is attached/i);
     expect(inspector.previewMessages[1]?.author).toBe('Antigravity');
     expect(inspector.evidence[0]?.path).toBe('/tmp/visible-window.png');
+  });
+
+  it('prunes stale persisted antigravity threads when a live snapshot is available', async () => {
+    _initTestDatabase();
+
+    upsertAgentThread({
+      id: 'antigravity:nanoclaw:fixing-host-mode-responses',
+      provider: 'antigravity',
+      externalRef: 'nanoclaw:fixing-host-mode-responses',
+      title: 'Fixing Host Mode Responses',
+      groupJid: null,
+      effort: 'high',
+      desiredEffort: null,
+      state: 'running',
+      lastSeenAt: '2026-03-18T00:00:00.000Z',
+      metadataJson: null,
+    });
+
+    const service = new AgentDashboardService({
+      registeredGroups: () => ({}),
+      sessions: () => ({}),
+      queueSnapshot: () => ({}),
+      antigravityProvider: {
+        async getSnapshot() {
+          return {
+            provider: {
+              provider: 'antigravity' as const,
+              enabled: true,
+              available: true,
+              pollIntervalMs: 2000,
+              warnings: [],
+            },
+            projects: [],
+            threads: [
+              {
+                id: 'antigravity:nanoclaw:debugging-agent-threads',
+                provider: 'antigravity' as const,
+                externalRef: 'nanoclaw:debugging-agent-threads',
+                title: 'Debugging Agent Threads',
+                groupJid: null,
+                effort: 'high' as const,
+                desiredEffort: null,
+                state: 'waiting' as const,
+                lastSeenAt: '2026-03-18T00:05:00.000Z',
+                metadataJson: null,
+              },
+            ],
+            warnings: [],
+          };
+        },
+      } as any,
+    });
+
+    const snapshot = await service.getSnapshot();
+
+    expect(
+      snapshot.threads.map((thread) => `${thread.provider}:${thread.title}`),
+    ).toEqual(['antigravity:Debugging Agent Threads']);
+    expect(
+      service.getThreadTimeline(
+        'antigravity:nanoclaw:fixing-host-mode-responses',
+      ).thread,
+    ).toBeNull();
   });
 });

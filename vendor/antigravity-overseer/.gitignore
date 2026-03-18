@@ -1,0 +1,7 @@
+.DS_Store
+.learnings/
+node_modules/
+runtime/*.sqlite
+runtime/evidence/
+runtime/logs/
+runtime/profile/

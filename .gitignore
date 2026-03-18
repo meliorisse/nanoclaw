@@ -8,6 +8,7 @@ dist/
 store/
 data/
 logs/
+runtime/
 
 # Groups - only track base structure and specific CLAUDE.md files
 groups/*
@@ -36,3 +37,8 @@ groups/global/*
 .nanoclaw/
 
 agents-sdk-docs
+
+# Vendored Antigravity runtime state
+vendor/antigravity-overseer/runtime/evidence/
+vendor/antigravity-overseer/runtime/overseer.sqlite
+tools/antigravity-collector/dist/

@@ -6,6 +6,7 @@ import { ASSISTANT_NAME, SCHEDULER_POLL_INTERVAL, TIMEZONE } from './config.js';
 import {
   ContainerOutput,
   runContainerAgent,
+  runHostAgent,
   writeTasksSnapshot,
 } from './container-runner.js';
 import {
@@ -169,7 +170,7 @@ async function runTask(
   };
 
   try {
-    const output = await runContainerAgent(
+    const output = await (group.hostMode ? runHostAgent : runContainerAgent)(
       group,
       {
         prompt: task.prompt,

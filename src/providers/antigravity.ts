@@ -8,6 +8,7 @@ import {
   ANTIGRAVITY_MCP_ENTRY,
   ANTIGRAVITY_OVERSEER_DIR,
   ANTIGRAVITY_POLL_INTERVAL,
+  ANTIGRAVITY_SCREEN_TEXT_COMMAND,
 } from '../config.js';
 import { logger } from '../logger.js';
 import {
@@ -111,6 +112,15 @@ export interface AntigravitySnapshot {
   warnings: string[];
 }
 
+function filterDashboardWarnings(warnings: string[]): string[] {
+  return warnings.filter(
+    (warning) =>
+      !/^Ledger contains \d+ task\(s\) that are not on the current visible screen\.$/.test(
+        warning,
+      ),
+  );
+}
+
 export function extractTrailingJson(stdout: string): string {
   const trimmed = stdout.trim();
   const candidateOffsets = [
@@ -169,10 +179,16 @@ export class AntigravityProvider {
       ['--experimental-strip-types', entry, tool, JSON.stringify(args)],
       {
         cwd: ANTIGRAVITY_OVERSEER_DIR,
-        timeout: 5000,
+        timeout: 15000,
         env: {
           ...process.env,
           OVERSEER_LOG_LEVEL: process.env.OVERSEER_LOG_LEVEL || 'error',
+          NODE_NO_WARNINGS: process.env.NODE_NO_WARNINGS || '1',
+          ...(ANTIGRAVITY_SCREEN_TEXT_COMMAND
+            ? {
+                OVERSEER_SCREEN_TEXT_COMMAND: ANTIGRAVITY_SCREEN_TEXT_COMMAND,
+              }
+            : {}),
         },
       },
     );
@@ -205,10 +221,10 @@ export class AntigravityProvider {
         ),
       ]);
 
-      const warnings = [
+      const warnings = filterDashboardWarnings([
         ...(overview.warnings || []),
         ...(report.warnings || []),
-      ];
+      ]);
       const activeRef = overview.data?.activeConversationRef || null;
       const projects =
         overview.data?.projects
@@ -226,11 +242,7 @@ export class AntigravityProvider {
         overview.data?.projects.flatMap((project) =>
           project.conversations.map((conversation) => {
             const state: AgentThreadState =
-              activeRef === conversation.conversationRef
-                ? 'running'
-                : conversation.status === 'active'
-                  ? 'waiting'
-                  : 'idle';
+              conversation.status === 'active' ? 'waiting' : 'idle';
 
             return {
               id: `antigravity:${conversation.conversationRef}`,
@@ -431,7 +443,7 @@ export class AntigravityProvider {
       );
 
       const previewMessages = (conversation.data?.messages || [])
-        .slice(-6)
+        .slice(-50)
         .map((message) => ({
           role: (message.role === 'user' ||
           message.role === 'assistant' ||
@@ -444,7 +456,7 @@ export class AntigravityProvider {
               : message.role === 'user'
                 ? 'User'
                 : message.role,
-          text: this.truncate(message.text, 500),
+          text: this.truncate(message.text, 4000),
           createdAt: null,
         }));
 

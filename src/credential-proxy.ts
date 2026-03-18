@@ -16,6 +16,16 @@ import { request as httpRequest, RequestOptions } from 'http';
 
 import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
+
+const MAX_OUTPUT_TOKENS = 4000;
+const LOCAL_MODEL_INPUT_TOKEN_LIMIT = 28000;
+
+function estimateLocalModelInputTokens(body: Record<string, unknown>): number {
+  // Conservative heuristic for Anthropic-style payloads headed to LM Studio.
+  // XML-like prompts, tool schemas, and escaped content tend to tokenize more
+  // densely than plain English, so use ~3 chars/token instead of ~4.
+  return Math.ceil(JSON.stringify(body).length / 3);
+}
 import { handleAnthropicTranslation } from './anthropic-openai-translator.js';
 
 export type AuthMode = 'api-key' | 'oauth';
@@ -93,16 +103,40 @@ export function startCredentialProxy(
               string,
               unknown
             >;
-            const MAX_OUTPUT_TOKENS = 4000;
             if (
               typeof parsed.max_tokens === 'number' &&
               parsed.max_tokens > MAX_OUTPUT_TOKENS
             ) {
               parsed.max_tokens = MAX_OUTPUT_TOKENS;
-              const patched = JSON.stringify(parsed);
-              forwardBody = Buffer.from(patched);
-              headers['content-length'] = forwardBody.length;
             }
+
+            const estimatedInputTokens = estimateLocalModelInputTokens(parsed);
+            if (estimatedInputTokens > LOCAL_MODEL_INPUT_TOKEN_LIMIT) {
+              logger.warn(
+                {
+                  url: req.url,
+                  estimatedInputTokens,
+                  limit: LOCAL_MODEL_INPUT_TOKEN_LIMIT,
+                },
+                'Rejected oversized local-model request before forwarding to LM Studio',
+              );
+              res.writeHead(413, { 'content-type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  type: 'error',
+                  error: {
+                    type: 'invalid_request_error',
+                    message:
+                      'Prompt exceeds the safe local-model context budget before reaching LM Studio. Reduce preserved history or task context and try again.',
+                  },
+                }),
+              );
+              return;
+            }
+
+            const patched = JSON.stringify(parsed);
+            forwardBody = Buffer.from(patched);
+            headers['content-length'] = forwardBody.length;
           } catch {
             // Non-JSON body — forward unchanged
           }

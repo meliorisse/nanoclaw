@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { _initTestDatabase, createTask, getTaskById } from './db.js';
+import * as containerRunner from './container-runner.js';
 import {
   _resetSchedulerLoopForTests,
   computeNextRun,
@@ -16,6 +17,7 @@ describe('task scheduler', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it('pauses due tasks with invalid group folders to prevent retry churn', async () => {
@@ -125,5 +127,79 @@ describe('task scheduler', () => {
     const offset =
       (new Date(nextRun!).getTime() - new Date(scheduledTime).getTime()) % ms;
     expect(offset).toBe(0);
+  });
+
+  it('runs host-mode scheduled tasks locally instead of in a container', async () => {
+    const hostSpy = vi
+      .spyOn(containerRunner, 'runHostAgent')
+      .mockImplementation(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'host ok',
+        });
+        return {
+          status: 'success',
+          result: 'host ok',
+        };
+      });
+    const containerSpy = vi
+      .spyOn(containerRunner, 'runContainerAgent')
+      .mockImplementation(async (_group, _input, _onProcess, onOutput) => {
+        await onOutput?.({
+          status: 'success',
+          result: 'container ok',
+        });
+        return {
+          status: 'success',
+          result: 'container ok',
+        };
+      });
+
+    createTask({
+      id: 'task-host-mode',
+      group_folder: 'webui_control',
+      chat_jid: 'webui@local',
+      prompt: 'check local webui control flow',
+      schedule_type: 'once',
+      schedule_value: '2026-02-22T00:00:00.000Z',
+      context_mode: 'isolated',
+      next_run: new Date(Date.now() - 60_000).toISOString(),
+      status: 'active',
+      created_at: '2026-02-22T00:00:00.000Z',
+    });
+
+    const enqueueTask = vi.fn(
+      (_groupJid: string, _taskId: string, fn: () => Promise<void>) => {
+        void fn();
+      },
+    );
+    const sendMessage = vi.fn(async () => {});
+
+    startSchedulerLoop({
+      registeredGroups: () => ({
+        'webui@local': {
+          name: 'WebUI Control',
+          folder: 'webui_control',
+          trigger: '@Andy',
+          added_at: '2026-03-18T00:00:00.000Z',
+          requiresTrigger: false,
+          hostMode: true,
+        },
+      }),
+      getSessions: () => ({}),
+      queue: {
+        enqueueTask,
+        notifyIdle: vi.fn(),
+        closeStdin: vi.fn(),
+      } as any,
+      onProcess: () => {},
+      sendMessage,
+    });
+
+    await vi.advanceTimersByTimeAsync(20);
+
+    expect(hostSpy).toHaveBeenCalledOnce();
+    expect(containerSpy).not.toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledWith('webui@local', 'host ok');
   });
 });

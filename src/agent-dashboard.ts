@@ -1,4 +1,5 @@
 import {
+  deleteAgentThreads,
   getAgentThread,
   getChatHistory,
   listAgentThreads,
@@ -127,9 +128,8 @@ export class AgentDashboardService {
   }
 
   async getSnapshot(): Promise<AgentDashboardSnapshot> {
-    const existingThreads = new Map(
-      listAgentThreads().map((thread) => [thread.id, thread]),
-    );
+    const storedThreads = listAgentThreads();
+    const existingThreads = new Map(storedThreads.map((thread) => [thread.id, thread]));
     const tasks = getAllTasks();
     const localThreads = buildLocalThreads({
       registeredGroups: this.registeredGroups(),
@@ -143,8 +143,18 @@ export class AgentDashboardService {
       ...localThreads.map((thread) => thread.id),
       ...antigravity.threads.map((thread) => thread.id),
     ]);
-    const persistedThreads = listAgentThreads().filter(
-      (thread) => !liveThreadIds.has(thread.id),
+    const staleAntigravityThreadIds = storedThreads
+      .filter(
+        (thread) =>
+          thread.provider === 'antigravity' && !liveThreadIds.has(thread.id),
+      )
+      .map((thread) => thread.id);
+
+    deleteAgentThreads(staleAntigravityThreadIds);
+
+    const persistedThreads = storedThreads.filter(
+      (thread) =>
+        thread.provider !== 'antigravity' && !liveThreadIds.has(thread.id),
     );
     const threads = sortThreads([
       ...localThreads,
@@ -495,20 +505,20 @@ export class AgentDashboardService {
     previewMessages: AgentThreadPreviewMessage[];
     evidence: AgentThreadEvidenceLink[];
   } {
-    const history = getChatHistory(thread.externalRef, 6);
+    const history = getChatHistory(thread.externalRef, 50);
     const previewMessages = history.map((message) => ({
       role: (message.is_bot_message ? 'assistant' : 'user') as
         | 'assistant'
         | 'user',
       author: message.sender_name || message.sender || 'local',
-      text: this.truncate(message.content, 500),
+      text: this.truncate(message.content, 4000),
       createdAt: message.timestamp || null,
     }));
 
     return {
       summary:
         previewMessages.length > 0
-          ? `Showing the last ${previewMessages.length} locally stored message${previewMessages.length === 1 ? '' : 's'} for ${thread.title}.`
+          ? `Showing ${previewMessages.length} locally stored message${previewMessages.length === 1 ? '' : 's'} for ${thread.title}.`
           : `No local transcript has been stored for ${thread.title} yet.`,
       previewMessages,
       evidence: [],

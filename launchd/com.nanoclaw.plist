@@ -23,6 +23,10 @@
         <string>{{HOME}}</string>
         <key>ASSISTANT_NAME</key>
         <string>Andy</string>
+        <key>ANTIGRAVITY_OVERSEER_DIR</key>
+        <string>{{PROJECT_ROOT}}/vendor/antigravity-overseer</string>
+        <key>ANTIGRAVITY_SCREEN_TEXT_COMMAND</key>
+        <string>{{PROJECT_ROOT}}/tools/antigravity-collector/run.sh</string>
     </dict>
     <key>StandardOutPath</key>
     <string>{{PROJECT_ROOT}}/logs/nanoclaw.log</string>
