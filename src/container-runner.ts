@@ -215,7 +215,11 @@ function buildVolumeMounts(
   const clawspaceHost = path.join(os.homedir(), 'CLAWSPACE');
   const clawspaceContainer = '/home/node/CLAWSPACE';
   if (fs.existsSync(clawspaceHost)) {
-    mounts.push({ hostPath: clawspaceHost, containerPath: clawspaceContainer, readonly: false });
+    mounts.push({
+      hostPath: clawspaceHost,
+      containerPath: clawspaceContainer,
+      readonly: false,
+    });
   }
 
   return mounts;
@@ -675,12 +679,15 @@ export async function runHostAgent(
 
   // Ensure the agent-runner is installed and built on the host
   if (!fs.existsSync(agentRunnerEntry)) {
-    logger.info({ group: group.name }, 'Host mode: building agent-runner for first use');
+    logger.info(
+      { group: group.name },
+      'Host mode: building agent-runner for first use',
+    );
     await new Promise<void>((res, rej) => {
       exec(
         'npm install && npm run build',
         { cwd: agentRunnerDir, timeout: 120_000 },
-        (err) => err ? rej(err) : res(),
+        (err) => (err ? rej(err) : res()),
       );
     });
   }
@@ -718,10 +725,10 @@ export async function runHostAgent(
     // This ensures tool calling works correctly — the user's installed claude
     // binary may behave differently from the version shipped with claude-agent-sdk.
     PATH: [
-      path.dirname(process.execPath),       // node binary dir
-      '/Users/unitybox/homebrew/bin',        // Homebrew
+      path.dirname(process.execPath), // node binary dir
+      '/Users/unitybox/homebrew/bin', // Homebrew
       '/Users/unitybox/homebrew/sbin',
-      '/usr/local/bin',                      // misc CLI tools
+      '/usr/local/bin', // misc CLI tools
       process.env.PATH || '/usr/bin:/bin',
     ].join(':'),
 
@@ -751,7 +758,6 @@ export async function runHostAgent(
     TZ: TIMEZONE,
   };
 
-
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const processLabel = `nanoclaw-host-${safeName}-${Date.now()}`;
 
@@ -765,8 +771,10 @@ export async function runHostAgent(
   const HOST_AGENT_TIMEOUT = 15 * 60 * 1000; // 15 min (matches 10-min LM Studio request timeout + buffer)
 
   const configTimeout = group.containerConfig?.timeout || CONTAINER_TIMEOUT;
-  const timeoutMs = Math.min(Math.max(configTimeout, IDLE_TIMEOUT + 30_000), HOST_AGENT_TIMEOUT);
-
+  const timeoutMs = Math.min(
+    Math.max(configTimeout, IDLE_TIMEOUT + 30_000),
+    HOST_AGENT_TIMEOUT,
+  );
 
   return new Promise((resolve) => {
     const proc = spawn(process.execPath, [agentRunnerEntry], {
@@ -793,13 +801,19 @@ export async function runHostAgent(
 
     const killOnTimeout = () => {
       timedOut = true;
-      logger.error({ group: group.name, processLabel }, 'Host agent timeout, killing');
+      logger.error(
+        { group: group.name, processLabel },
+        'Host agent timeout, killing',
+      );
       proc.kill('SIGTERM');
       setTimeout(() => proc.kill('SIGKILL'), 5000);
     };
 
     let timeout = setTimeout(killOnTimeout, timeoutMs);
-    const resetTimeout = () => { clearTimeout(timeout); timeout = setTimeout(killOnTimeout, timeoutMs); };
+    const resetTimeout = () => {
+      clearTimeout(timeout);
+      timeout = setTimeout(killOnTimeout, timeoutMs);
+    };
 
     proc.stdout.on('data', (data) => {
       const chunk = data.toString();
@@ -810,7 +824,9 @@ export async function runHostAgent(
         while ((startIdx = parseBuffer.indexOf(OUTPUT_START_MARKER)) !== -1) {
           const endIdx = parseBuffer.indexOf(OUTPUT_END_MARKER, startIdx);
           if (endIdx === -1) break;
-          const jsonStr = parseBuffer.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim();
+          const jsonStr = parseBuffer
+            .slice(startIdx + OUTPUT_START_MARKER.length, endIdx)
+            .trim();
           parseBuffer = parseBuffer.slice(endIdx + OUTPUT_END_MARKER.length);
           try {
             const parsed: ContainerOutput = JSON.parse(jsonStr);
@@ -819,7 +835,10 @@ export async function runHostAgent(
             resetTimeout();
             outputChain = outputChain.then(() => onOutput(parsed));
           } catch (err) {
-            logger.warn({ group: group.name, err }, 'Failed to parse host agent output chunk');
+            logger.warn(
+              { group: group.name, err },
+              'Failed to parse host agent output chunk',
+            );
           }
         }
       }
@@ -839,22 +858,38 @@ export async function runHostAgent(
 
       if (timedOut) {
         if (hadStreamingOutput) {
-          outputChain.then(() => resolve({ status: 'success', result: null, newSessionId }));
+          outputChain.then(() =>
+            resolve({ status: 'success', result: null, newSessionId }),
+          );
         } else {
-          resolve({ status: 'error', result: null, error: `Host agent timed out after ${configTimeout}ms` });
+          resolve({
+            status: 'error',
+            result: null,
+            error: `Host agent timed out after ${configTimeout}ms`,
+          });
         }
         return;
       }
 
       if (code !== 0) {
-        logger.error({ group: group.name, code, duration, stderr }, 'Host agent exited with error');
-        resolve({ status: 'error', result: null, error: `Host agent exited with code ${code}: ${stderr.slice(-200)}` });
+        logger.error(
+          { group: group.name, code, duration, stderr },
+          'Host agent exited with error',
+        );
+        resolve({
+          status: 'error',
+          result: null,
+          error: `Host agent exited with code ${code}: ${stderr.slice(-200)}`,
+        });
         return;
       }
 
       if (onOutput) {
         outputChain.then(() => {
-          logger.info({ group: group.name, duration, newSessionId }, 'Host agent completed (streaming)');
+          logger.info(
+            { group: group.name, duration, newSessionId },
+            'Host agent completed (streaming)',
+          );
           resolve({ status: 'success', result: null, newSessionId });
         });
         return;
@@ -864,19 +899,28 @@ export async function runHostAgent(
       try {
         const startIdx = stdout.indexOf(OUTPUT_START_MARKER);
         const endIdx = stdout.indexOf(OUTPUT_END_MARKER);
-        let jsonLine = startIdx !== -1 && endIdx > startIdx
-          ? stdout.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim()
-          : stdout.trim().split('\n').at(-1) ?? '';
+        let jsonLine =
+          startIdx !== -1 && endIdx > startIdx
+            ? stdout.slice(startIdx + OUTPUT_START_MARKER.length, endIdx).trim()
+            : (stdout.trim().split('\n').at(-1) ?? '');
         resolve(JSON.parse(jsonLine));
       } catch (err) {
-        resolve({ status: 'error', result: null, error: `Parse error: ${err instanceof Error ? err.message : String(err)}` });
+        resolve({
+          status: 'error',
+          result: null,
+          error: `Parse error: ${err instanceof Error ? err.message : String(err)}`,
+        });
       }
     });
 
     proc.on('error', (err) => {
       clearTimeout(timeout);
       logger.error({ group: group.name, err }, 'Host agent spawn error');
-      resolve({ status: 'error', result: null, error: `Host agent spawn error: ${err.message}` });
+      resolve({
+        status: 'error',
+        result: null,
+        error: `Host agent spawn error: ${err.message}`,
+      });
     });
   });
 }

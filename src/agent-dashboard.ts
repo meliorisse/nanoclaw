@@ -10,9 +10,7 @@ import {
   upsertAntigravityGroupMapping,
   upsertAgentThread,
 } from './db.js';
-import type {
-  GroupQueueSnapshotEntry,
-} from './group-queue.js';
+import type { GroupQueueSnapshotEntry } from './group-queue.js';
 import { AntigravityProvider } from './providers/antigravity.js';
 import {
   AgentDashboardSnapshot,
@@ -58,7 +56,9 @@ export function buildLocalThreads(input: {
   return Object.entries(input.registeredGroups).map(([jid, group]) => {
     const queue = input.queueSnapshot[jid];
     const existing = input.existingThreads?.get(`local:${jid}`);
-    const taskCount = input.tasks.filter((task) => task.chat_jid === jid).length;
+    const taskCount = input.tasks.filter(
+      (task) => task.chat_jid === jid,
+    ).length;
 
     let state: AgentThread['state'] = 'idle';
     if (queue?.active) {
@@ -302,7 +302,10 @@ export class AgentDashboardService {
   ): Promise<EffortChangeResult> {
     if (thread.provider === 'antigravity') {
       if (targetEffort === 'high') {
-        return this.antigravityProvider.requestEffortChange(thread, targetEffort);
+        return this.antigravityProvider.requestEffortChange(
+          thread,
+          targetEffort,
+        );
       }
       return this.pullBackToLocal(thread, targetEffort);
     }
@@ -430,9 +433,8 @@ export class AgentDashboardService {
       typeof meta.projectName === 'string' ? meta.projectName : 'Antigravity';
     const projectRef =
       typeof meta.projectRef === 'string' ? meta.projectRef : 'unknown-project';
-    const handoffContext = await this.antigravityProvider.buildPullbackContext(
-      thread,
-    );
+    const handoffContext =
+      await this.antigravityProvider.buildPullbackContext(thread);
     const directive = [
       '@Andy resume this work locally.',
       `This task is being pulled back from Antigravity project "${projectName}".`,
@@ -460,7 +462,10 @@ export class AgentDashboardService {
     }
 
     const meta = this.parseMetadata(thread.metadataJson);
-    if (typeof meta.sourceGroupJid === 'string' && meta.sourceGroupJid.length > 0) {
+    if (
+      typeof meta.sourceGroupJid === 'string' &&
+      meta.sourceGroupJid.length > 0
+    ) {
       return meta.sourceGroupJid;
     }
 

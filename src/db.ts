@@ -410,10 +410,7 @@ export function getMessagesSince(
  * Return the last N messages for a chat (both user and bot), oldest first.
  * Used by the WebUI to replay history in a new browser tab.
  */
-export function getChatHistory(
-  chatJid: string,
-  limit = 100,
-): NewMessage[] {
+export function getChatHistory(chatJid: string, limit = 100): NewMessage[] {
   const sql = `
     SELECT * FROM (
       SELECT id, chat_jid, sender, sender_name, content, timestamp,
@@ -534,7 +531,9 @@ export function getAgentThread(id: string): AgentThread | undefined {
 
 export function listAgentThreads(): AgentThread[] {
   const rows = db
-    .prepare('SELECT * FROM agent_threads ORDER BY last_seen_at DESC, title ASC')
+    .prepare(
+      'SELECT * FROM agent_threads ORDER BY last_seen_at DESC, title ASC',
+    )
     .all() as Array<{
     id: string;
     provider: AgentThread['provider'];
@@ -566,9 +565,10 @@ export function setAgentThreadDesiredEffort(
   id: string,
   desiredEffort: AgentThread['desiredEffort'],
 ): void {
-  db.prepare(
-    'UPDATE agent_threads SET desired_effort = ? WHERE id = ?',
-  ).run(desiredEffort, id);
+  db.prepare('UPDATE agent_threads SET desired_effort = ? WHERE id = ?').run(
+    desiredEffort,
+    id,
+  );
 }
 
 export function recordAgentThreadAction(input: {

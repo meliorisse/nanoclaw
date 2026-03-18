@@ -210,7 +210,6 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
   }
 
-
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';

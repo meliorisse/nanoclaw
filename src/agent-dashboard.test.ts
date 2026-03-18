@@ -72,12 +72,12 @@ describe('agent dashboard scaffolding', () => {
     });
 
     expect(threads).toHaveLength(2);
-    expect(threads.find((thread) => thread.id === 'local:dev@g.us')?.state).toBe(
-      'running',
-    );
-    expect(threads.find((thread) => thread.id === 'local:ops@g.us')?.state).toBe(
-      'queued',
-    );
+    expect(
+      threads.find((thread) => thread.id === 'local:dev@g.us')?.state,
+    ).toBe('running');
+    expect(
+      threads.find((thread) => thread.id === 'local:ops@g.us')?.state,
+    ).toBe('queued');
   });
 
   it('sorts running threads ahead of idle ones', () => {
@@ -186,10 +186,16 @@ describe('agent dashboard scaffolding', () => {
     });
 
     await service.getSnapshot();
-    const mappingResult = await service.setAntigravityMapping('dev@g.us', 'proj_1');
+    const mappingResult = await service.setAntigravityMapping(
+      'dev@g.us',
+      'proj_1',
+    );
     expect(mappingResult.ok).toBe(true);
 
-    const escalation = await service.requestEffortChange('local:dev@g.us', 'high');
+    const escalation = await service.requestEffortChange(
+      'local:dev@g.us',
+      'high',
+    );
     expect(escalation.ok).toBe(true);
     expect(escalation.message).toMatch(/follow-up agent created/i);
     expect(
@@ -306,7 +312,13 @@ describe('agent dashboard scaffolding', () => {
       trigger: '@Andy',
       added_at: '2026-03-18T00:00:00.000Z',
     });
-    storeChatMetadata('dev@g.us', '2026-03-18T00:00:00.000Z', 'Dev', 'test', true);
+    storeChatMetadata(
+      'dev@g.us',
+      '2026-03-18T00:00:00.000Z',
+      'Dev',
+      'test',
+      true,
+    );
 
     storeMessage({
       id: 'msg-1',

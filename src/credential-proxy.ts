@@ -89,9 +89,15 @@ export function startCredentialProxy(
         let forwardBody = body;
         if (isLocalModel && req.url?.includes('/messages')) {
           try {
-            const parsed = JSON.parse(body.toString()) as Record<string, unknown>;
+            const parsed = JSON.parse(body.toString()) as Record<
+              string,
+              unknown
+            >;
             const MAX_OUTPUT_TOKENS = 4000;
-            if (typeof parsed.max_tokens === 'number' && parsed.max_tokens > MAX_OUTPUT_TOKENS) {
+            if (
+              typeof parsed.max_tokens === 'number' &&
+              parsed.max_tokens > MAX_OUTPUT_TOKENS
+            ) {
               parsed.max_tokens = MAX_OUTPUT_TOKENS;
               const patched = JSON.stringify(parsed);
               forwardBody = Buffer.from(patched);
@@ -121,11 +127,22 @@ export function startCredentialProxy(
 
         // Timeout fires if LM Studio stalls before sending any response bytes
         upstream.on('timeout', () => {
-          logger.warn({ url: req.url }, 'Local model request timed out after 10 minutes');
+          logger.warn(
+            { url: req.url },
+            'Local model request timed out after 10 minutes',
+          );
           upstream.destroy();
           if (!res.headersSent) {
             res.writeHead(504, { 'content-type': 'application/json' });
-            res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Local model request timed out' } }));
+            res.end(
+              JSON.stringify({
+                type: 'error',
+                error: {
+                  type: 'overloaded_error',
+                  message: 'Local model request timed out',
+                },
+              }),
+            );
           }
         });
 
@@ -137,7 +154,6 @@ export function startCredentialProxy(
           if (!res.headersSent) {
             res.writeHead(502);
             res.end('Bad Gateway');
-
           }
         });
 

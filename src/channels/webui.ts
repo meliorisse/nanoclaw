@@ -26,9 +26,14 @@ import { getAllTasks, getChatHistory } from '../db.js';
 
 // Always serve the frontend from the project source tree (works from both
 // dist/channels/webui.js and src/channels/webui.ts via tsx).
-const FRONTEND_DIR = path.join(process.cwd(), 'src', 'channels', 'webui-frontend');
+const FRONTEND_DIR = path.join(
+  process.cwd(),
+  'src',
+  'channels',
+  'webui-frontend',
+);
 
-const WEBUI_JID    = 'webui@local';
+const WEBUI_JID = 'webui@local';
 const WEBUI_FOLDER = 'webui_control';
 const WEBUI_SENDER = 'user@webui';
 
@@ -52,7 +57,10 @@ function tailLog(n = 20): string {
   try {
     if (!fs.existsSync(logPath)) return '(no log file yet)';
     const lines = fs.readFileSync(logPath, 'utf-8').trim().split('\n');
-    return lines.slice(-n).map(l => l.replace(ANSI_RE, '')).join('\n');
+    return lines
+      .slice(-n)
+      .map((l) => l.replace(ANSI_RE, ''))
+      .join('\n');
   } catch {
     return '(error reading log)';
   }
@@ -60,9 +68,7 @@ function tailLog(n = 20): string {
 
 // ── Status API ────────────────────────────────────────────────────────────────
 
-async function buildStatus(
-  opts: ChannelOpts,
-): Promise<{
+async function buildStatus(opts: ChannelOpts): Promise<{
   uptime: number;
   groups: Array<{ jid: string; name: string; folder: string; isMain: boolean }>;
   tasks: Array<{
@@ -96,7 +102,7 @@ async function buildStatus(
       folder: g.folder,
       isMain: g.isMain || false,
     })),
-    tasks: tasks.map(t => ({
+    tasks: tasks.map((t) => ({
       id: t.id,
       prompt: t.prompt.slice(0, 80),
       schedule_type: t.schedule_type,
@@ -149,20 +155,29 @@ class WebuiChannel implements Channel {
 
     if (req.method === 'GET' && urlPath === '/api/status') {
       const json = JSON.stringify(await buildStatus(this.opts));
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+      });
       res.end(json);
       return;
     }
 
     if (req.method === 'GET' && urlPath === '/api/history') {
       const rows = getChatHistory(WEBUI_JID, 100);
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+      res.writeHead(200, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+      });
       res.end(JSON.stringify(rows));
       return;
     }
 
     if (req.method === 'GET' && urlPath === '/api/threads/timeline') {
-      const reqUrl = new URL(req.url ?? '/api/threads/timeline', 'http://127.0.0.1');
+      const reqUrl = new URL(
+        req.url ?? '/api/threads/timeline',
+        'http://127.0.0.1',
+      );
       const threadId = reqUrl.searchParams.get('threadId');
 
       if (!threadId) {
@@ -181,7 +196,10 @@ class WebuiChannel implements Channel {
     }
 
     if (req.method === 'GET' && urlPath === '/api/threads/inspector') {
-      const reqUrl = new URL(req.url ?? '/api/threads/inspector', 'http://127.0.0.1');
+      const reqUrl = new URL(
+        req.url ?? '/api/threads/inspector',
+        'http://127.0.0.1',
+      );
       const threadId = reqUrl.searchParams.get('threadId');
 
       if (!threadId) {
@@ -205,11 +223,16 @@ class WebuiChannel implements Channel {
 
       if (!requestedPath || !path.isAbsolute(requestedPath)) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'An absolute path is required.' }));
+        res.end(
+          JSON.stringify({ ok: false, error: 'An absolute path is required.' }),
+        );
         return;
       }
 
-      if (!fs.existsSync(requestedPath) || !fs.statSync(requestedPath).isFile()) {
+      if (
+        !fs.existsSync(requestedPath) ||
+        !fs.statSync(requestedPath).isFile()
+      ) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: false, error: 'File not found.' }));
         return;
@@ -245,9 +268,17 @@ class WebuiChannel implements Channel {
         targetEffort?: 'low' | 'high';
       };
 
-      if (!data.threadId || (data.targetEffort !== 'low' && data.targetEffort !== 'high')) {
+      if (
+        !data.threadId ||
+        (data.targetEffort !== 'low' && data.targetEffort !== 'high')
+      ) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'threadId and targetEffort are required.' }));
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: 'threadId and targetEffort are required.',
+          }),
+        );
         return;
       }
 
@@ -273,7 +304,12 @@ class WebuiChannel implements Channel {
 
       if (!data.groupJid || !data.projectId) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: false, error: 'groupJid and projectId are required.' }));
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: 'groupJid and projectId are required.',
+          }),
+        );
         return;
       }
 
@@ -290,16 +326,28 @@ class WebuiChannel implements Channel {
       return;
     }
 
-    if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
 
-    const filePath = path.join(FRONTEND_DIR, urlPath === '/' ? 'index.html' : urlPath);
+    const filePath = path.join(
+      FRONTEND_DIR,
+      urlPath === '/' ? 'index.html' : urlPath,
+    );
     if (!filePath.startsWith(FRONTEND_DIR) || !fs.existsSync(filePath)) {
-      res.writeHead(404); res.end('Not found'); return;
+      res.writeHead(404);
+      res.end('Not found');
+      return;
     }
     const ext = path.extname(filePath).slice(1);
     const mime: Record<string, string> = {
-      html: 'text/html;charset=utf-8', js: 'text/javascript', css: 'text/css',
-      png: 'image/png', svg: 'image/svg+xml',
+      html: 'text/html;charset=utf-8',
+      js: 'text/javascript',
+      css: 'text/css',
+      png: 'image/png',
+      svg: 'image/svg+xml',
     };
     res.writeHead(200, { 'Content-Type': mime[ext] ?? 'text/plain' });
     fs.createReadStream(filePath).pipe(res);
@@ -331,11 +379,20 @@ class WebuiChannel implements Channel {
     });
 
     // Seed chat metadata so the FK constraint in storeMessage is satisfied
-    this.opts.onChatMetadata(WEBUI_JID, new Date().toISOString(), 'WebUI Control', 'webui', false);
+    this.opts.onChatMetadata(
+      WEBUI_JID,
+      new Date().toISOString(),
+      'WebUI Control',
+      'webui',
+      false,
+    );
 
     return new Promise((resolve) => {
       this.server.listen(this.cfg.port, '127.0.0.1', () => {
-        logger.info({ port: this.cfg.port }, `WebUI channel listening — http://localhost:${this.cfg.port}`);
+        logger.info(
+          { port: this.cfg.port },
+          `WebUI channel listening — http://localhost:${this.cfg.port}`,
+        );
         resolve();
       });
     });
@@ -362,8 +419,12 @@ class WebuiChannel implements Channel {
     this.opts.onMessage(jid, botMsg);
   }
 
-  isConnected(): boolean { return this.server.listening; }
-  ownsJid(jid: string): boolean { return jid === WEBUI_JID; }
+  isConnected(): boolean {
+    return this.server.listening;
+  }
+  ownsJid(jid: string): boolean {
+    return jid === WEBUI_JID;
+  }
 
   async disconnect(): Promise<void> {
     return new Promise((resolve) => {
@@ -377,7 +438,9 @@ class WebuiChannel implements Channel {
 
   private handleClient(ws: WebSocket): void {
     this.clients.add(ws);
-    ws.send(JSON.stringify({ type: 'config', assistantName: this.cfg.assistantName }));
+    ws.send(
+      JSON.stringify({ type: 'config', assistantName: this.cfg.assistantName }),
+    );
 
     // Deliver conversation history immediately on connect
     try {
@@ -392,7 +455,10 @@ class WebuiChannel implements Channel {
     ws.on('close', () => this.clients.delete(ws));
     ws.on('message', (raw) => {
       try {
-        const data = JSON.parse(raw.toString()) as { type: string; text?: string };
+        const data = JSON.parse(raw.toString()) as {
+          type: string;
+          text?: string;
+        };
         if (data.type === 'message' && typeof data.text === 'string') {
           this.handleUserMessage(data.text);
         }
@@ -416,7 +482,10 @@ class WebuiChannel implements Channel {
       is_bot_message: false,
     };
     this.opts.onMessage(WEBUI_JID, msg);
-    logger.debug({ text: text.slice(0, 60) }, 'WebUI: message queued for agent');
+    logger.debug(
+      { text: text.slice(0, 60) },
+      'WebUI: message queued for agent',
+    );
   }
 }
 

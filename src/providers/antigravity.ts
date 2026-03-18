@@ -116,7 +116,9 @@ export function extractTrailingJson(stdout: string): string {
   const candidateOffsets = [
     trimmed.indexOf('{'),
     trimmed.lastIndexOf('\n{') >= 0 ? trimmed.lastIndexOf('\n{') + 1 : -1,
-  ].filter((offset, index, values) => offset >= 0 && values.indexOf(offset) === index);
+  ].filter(
+    (offset, index, values) => offset >= 0 && values.indexOf(offset) === index,
+  );
 
   for (const offset of candidateOffsets) {
     const candidate = trimmed.slice(offset).trim();
@@ -156,7 +158,10 @@ export class AntigravityProvider {
       }
     | undefined;
 
-  private async runTool<T>(tool: string, args: Record<string, unknown> = {}): Promise<T> {
+  private async runTool<T>(
+    tool: string,
+    args: Record<string, unknown> = {},
+  ): Promise<T> {
     const entry = path.join(ANTIGRAVITY_OVERSEER_DIR, ANTIGRAVITY_MCP_ENTRY);
 
     const { stdout } = await execFileAsync(
@@ -177,7 +182,9 @@ export class AntigravityProvider {
 
   async getSnapshot(force = false): Promise<AntigravitySnapshot> {
     if (!ANTIGRAVITY_ENABLED) {
-      return buildDisabledSnapshot('Antigravity add-on is disabled. Set ANTIGRAVITY_ENABLED=true to enable it.');
+      return buildDisabledSnapshot(
+        'Antigravity add-on is disabled. Set ANTIGRAVITY_ENABLED=true to enable it.',
+      );
     }
 
     if (!fs.existsSync(ANTIGRAVITY_OVERSEER_DIR)) {
@@ -198,13 +205,17 @@ export class AntigravityProvider {
         ),
       ]);
 
-      const warnings = [...(overview.warnings || []), ...(report.warnings || [])];
+      const warnings = [
+        ...(overview.warnings || []),
+        ...(report.warnings || []),
+      ];
       const activeRef = overview.data?.activeConversationRef || null;
       const projects =
         overview.data?.projects
           .filter(
             (project): project is typeof project & { projectId: string } =>
-              typeof project.projectId === 'string' && project.projectId.length > 0,
+              typeof project.projectId === 'string' &&
+              project.projectId.length > 0,
           )
           .map((project) => ({
             projectId: project.projectId,
@@ -336,7 +347,8 @@ export class AntigravityProvider {
   async buildPullbackContext(thread: AgentThread): Promise<string | null> {
     const metadata = this.parseMetadata(thread.metadataJson);
     const conversationIdentifier =
-      (typeof metadata.conversationId === 'string' && metadata.conversationId) ||
+      (typeof metadata.conversationId === 'string' &&
+        metadata.conversationId) ||
       thread.externalRef;
 
     try {
@@ -357,12 +369,14 @@ export class AntigravityProvider {
 
       let taskSummaryText: string | null = null;
       const conversationId =
-        (typeof metadata.conversationId === 'string' && metadata.conversationId) ||
+        (typeof metadata.conversationId === 'string' &&
+          metadata.conversationId) ||
         conversation.data?.conversationId ||
         null;
 
       if (conversationId) {
-        const tasks = await this.runTool<AntigravityListTasksResponse>('list_tasks');
+        const tasks =
+          await this.runTool<AntigravityListTasksResponse>('list_tasks');
         const task = tasks.data?.find(
           (candidate) => candidate.primaryConversationId === conversationId,
         );
@@ -391,7 +405,10 @@ export class AntigravityProvider {
 
       return parts.length > 0 ? parts.join(' ') : null;
     } catch (err) {
-      logger.warn({ err, threadId: thread.id }, 'Failed to build Antigravity pullback context');
+      logger.warn(
+        { err, threadId: thread.id },
+        'Failed to build Antigravity pullback context',
+      );
       return null;
     }
   }
@@ -401,7 +418,8 @@ export class AntigravityProvider {
   ): Promise<AntigravityThreadInspector> {
     const metadata = this.parseMetadata(thread.metadataJson);
     const conversationIdentifier =
-      (typeof metadata.conversationId === 'string' && metadata.conversationId) ||
+      (typeof metadata.conversationId === 'string' &&
+        metadata.conversationId) ||
       thread.externalRef;
 
     try {
@@ -415,13 +433,11 @@ export class AntigravityProvider {
       const previewMessages = (conversation.data?.messages || [])
         .slice(-6)
         .map((message) => ({
-          role: (
-            message.role === 'user' ||
-            message.role === 'assistant' ||
-            message.role === 'system'
-              ? message.role
-              : 'unknown'
-          ) as AgentThreadPreviewMessage['role'],
+          role: (message.role === 'user' ||
+          message.role === 'assistant' ||
+          message.role === 'system'
+            ? message.role
+            : 'unknown') as AgentThreadPreviewMessage['role'],
           author:
             message.role === 'assistant'
               ? 'Antigravity'
@@ -434,23 +450,26 @@ export class AntigravityProvider {
 
       let summary: string | null = null;
       const conversationId =
-        (typeof metadata.conversationId === 'string' && metadata.conversationId) ||
+        (typeof metadata.conversationId === 'string' &&
+          metadata.conversationId) ||
         conversation.data?.conversationId ||
         null;
 
       if (conversationId) {
-        const tasks = await this.runTool<AntigravityListTasksResponse>('list_tasks');
+        const tasks =
+          await this.runTool<AntigravityListTasksResponse>('list_tasks');
         const task = tasks.data?.find(
           (candidate) => candidate.primaryConversationId === conversationId,
         );
 
         if (task?.id) {
-          const taskSummary = await this.runTool<AntigravityTaskSummaryResponse>(
-            'get_task_summary',
-            {
-              taskId: task.id,
-            },
-          );
+          const taskSummary =
+            await this.runTool<AntigravityTaskSummaryResponse>(
+              'get_task_summary',
+              {
+                taskId: task.id,
+              },
+            );
 
           summary =
             taskSummary.data?.summary ||

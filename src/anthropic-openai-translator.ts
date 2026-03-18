@@ -189,7 +189,12 @@ function translateResponseToAnthropic(
       try {
         input = JSON.parse(tc.function.arguments);
       } catch {}
-      content.push({ type: 'tool_use', id: tc.id, name: tc.function.name, input });
+      content.push({
+        type: 'tool_use',
+        id: tc.id,
+        name: tc.function.name,
+        input,
+      });
     }
   }
 
@@ -239,18 +244,26 @@ function createSseTransformer(inputTokensHint: number) {
       for (const [idx] of toolCallBuffers) {
         const tc = toolCallBuffers.get(idx)!;
         let input: Record<string, unknown> = {};
-        try { input = JSON.parse(tc.args); } catch {}
+        try {
+          input = JSON.parse(tc.args);
+        } catch {}
         // We already emitted the block_start, now emit the complete input delta and stop
         out += emit('content_block_delta', {
           type: 'content_block_delta',
           index: idx,
           delta: { type: 'input_json_delta', partial_json: tc.args },
         });
-        out += emit('content_block_stop', { type: 'content_block_stop', index: idx });
+        out += emit('content_block_stop', {
+          type: 'content_block_stop',
+          index: idx,
+        });
       }
       toolCallBuffers.clear();
       if (textBlockOpen) {
-        out += emit('content_block_stop', { type: 'content_block_stop', index: 0 });
+        out += emit('content_block_stop', {
+          type: 'content_block_stop',
+          index: 0,
+        });
         textBlockOpen = false;
       }
       out += emit('message_delta', {
@@ -263,7 +276,11 @@ function createSseTransformer(inputTokensHint: number) {
     }
 
     let chunk: Record<string, unknown>;
-    try { chunk = JSON.parse(raw); } catch { return ''; }
+    try {
+      chunk = JSON.parse(raw);
+    } catch {
+      return '';
+    }
 
     const choices = chunk.choices as Record<string, unknown>[] | undefined;
     if (!choices?.length) return '';
@@ -311,7 +328,11 @@ function createSseTransformer(inputTokensHint: number) {
 
     // Tool calls
     const toolCalls = delta.tool_calls as
-      | { index: number; id?: string; function?: { name?: string; arguments?: string } }[]
+      | {
+          index: number;
+          id?: string;
+          function?: { name?: string; arguments?: string };
+        }[]
       | undefined;
 
     if (toolCalls?.length) {
@@ -319,7 +340,11 @@ function createSseTransformer(inputTokensHint: number) {
         const idx = tc.index + 1; // index 0 reserved for text block
         if (tc.id && tc.function?.name) {
           // New tool call block starting
-          toolCallBuffers.set(idx, { id: tc.id, name: tc.function.name, args: '' });
+          toolCallBuffers.set(idx, {
+            id: tc.id,
+            name: tc.function.name,
+            args: '',
+          });
           out += emit('content_block_start', {
             type: 'content_block_start',
             index: idx,
@@ -333,7 +358,11 @@ function createSseTransformer(inputTokensHint: number) {
           toolBlockIndex = idx;
         }
         if (tc.function?.arguments) {
-          const buf = toolCallBuffers.get(idx) ?? { id: '', name: '', args: '' };
+          const buf = toolCallBuffers.get(idx) ?? {
+            id: '',
+            name: '',
+            args: '',
+          };
           buf.args += tc.function.arguments;
           toolCallBuffers.set(idx, buf);
           // Don't emit partial_json here — we emit it all at [DONE]
@@ -348,7 +377,10 @@ function createSseTransformer(inputTokensHint: number) {
       // Will be closed at [DONE]
     } else if (finishReason && finishReason !== 'stop' && !toolCalls?.length) {
       if (textBlockOpen) {
-        out += emit('content_block_stop', { type: 'content_block_stop', index: 0 });
+        out += emit('content_block_stop', {
+          type: 'content_block_stop',
+          index: 0,
+        });
         textBlockOpen = false;
       }
     }
@@ -452,19 +484,34 @@ export function handleAnthropicTranslation(
           const oaResp = JSON.parse(raw) as Record<string, unknown>;
           if (oaResp.error) {
             // Forward error as-is with Anthropic error wrapper
-            res.writeHead(upRes.statusCode ?? 500, { 'content-type': 'application/json' });
-            res.end(JSON.stringify({
-              type: 'error',
-              error: { type: 'api_error', message: JSON.stringify(oaResp.error) },
-            }));
+            res.writeHead(upRes.statusCode ?? 500, {
+              'content-type': 'application/json',
+            });
+            res.end(
+              JSON.stringify({
+                type: 'error',
+                error: {
+                  type: 'api_error',
+                  message: JSON.stringify(oaResp.error),
+                },
+              }),
+            );
             return;
           }
-          const anthropicResp = translateResponseToAnthropic(oaResp, parsed.model);
+          const anthropicResp = translateResponseToAnthropic(
+            oaResp,
+            parsed.model,
+          );
           const out = JSON.stringify(anthropicResp);
-          res.writeHead(200, { 'content-type': 'application/json', 'content-length': out.length });
+          res.writeHead(200, {
+            'content-type': 'application/json',
+            'content-length': out.length,
+          });
           res.end(out);
         } catch {
-          res.writeHead(upRes.statusCode ?? 500, { 'content-type': 'application/json' });
+          res.writeHead(upRes.statusCode ?? 500, {
+            'content-type': 'application/json',
+          });
           res.end(raw);
         }
       });
@@ -473,7 +520,12 @@ export function handleAnthropicTranslation(
 
   upstream.on('error', (err) => {
     res.writeHead(502, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: err.message } }));
+    res.end(
+      JSON.stringify({
+        type: 'error',
+        error: { type: 'overloaded_error', message: err.message },
+      }),
+    );
   });
 
   upstream.write(openAIJson);
