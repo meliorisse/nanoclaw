@@ -176,6 +176,12 @@ export interface EffortChangeResult {
   message: string;
 }
 
+export interface ThreadMessageResult {
+  ok: boolean;
+  threadId: string;
+  message: string;
+}
+
 // --- Channel abstraction ---
 
 export interface Channel {

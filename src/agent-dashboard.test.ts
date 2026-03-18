@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   _initTestDatabase,
@@ -400,7 +400,7 @@ describe('agent dashboard scaffolding', () => {
     expect(inspector.previewMessages).toHaveLength(2);
     expect(inspector.previewMessages[0]?.author).toBe('User');
     expect(inspector.previewMessages[1]?.role).toBe('assistant');
-    expect(inspector.summary).toMatch(/last 2 locally stored messages/i);
+    expect(inspector.summary).toMatch(/showing 2 locally stored messages/i);
   });
 
   it('surfaces antigravity transcript previews and evidence links', async () => {
@@ -493,6 +493,76 @@ describe('agent dashboard scaffolding', () => {
     expect(inspector.summary).toMatch(/evidence is attached/i);
     expect(inspector.previewMessages[1]?.author).toBe('Antigravity');
     expect(inspector.evidence[0]?.path).toBe('/tmp/visible-window.png');
+  });
+
+  it('sends messages directly to a selected antigravity thread', async () => {
+    _initTestDatabase();
+    const sendMessage = vi.fn<
+      (thread: { id: string }, text: string) => Promise<void>
+    >(async () => {});
+
+    const service = new AgentDashboardService({
+      registeredGroups: () => ({}),
+      sessions: () => ({}),
+      queueSnapshot: () => ({}),
+      antigravityProvider: {
+        async getSnapshot() {
+          return {
+            provider: {
+              provider: 'antigravity' as const,
+              enabled: true,
+              available: true,
+              pollIntervalMs: 2000,
+              warnings: [],
+            },
+            projects: [],
+            threads: [
+              {
+                id: 'antigravity:nanoclaw:followup',
+                provider: 'antigravity' as const,
+                externalRef: 'nanoclaw:followup',
+                title: 'Debugging Agent Threads',
+                groupJid: null,
+                effort: 'high' as const,
+                desiredEffort: null,
+                state: 'waiting' as const,
+                lastSeenAt: '2026-03-18T00:00:00.000Z',
+                metadataJson: JSON.stringify({
+                  conversationId: 'conv_followup',
+                }),
+              },
+            ],
+            warnings: [],
+          };
+        },
+        async sendMessage(thread: { id: string }, text: string) {
+          await sendMessage(thread, text);
+          return {
+            ok: true,
+            threadId: thread.id,
+            message: 'Sent to Antigravity thread "Debugging Agent Threads".',
+          };
+        },
+      } as any,
+    });
+
+    await service.getSnapshot();
+    const result = await service.sendThreadMessage(
+      'antigravity:nanoclaw:followup',
+      'Please continue debugging the queue refresh issue.',
+    );
+
+    expect(result.ok).toBe(true);
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'antigravity:nanoclaw:followup',
+      }),
+      'Please continue debugging the queue refresh issue.',
+    );
+    expect(
+      service.getThreadTimeline('antigravity:nanoclaw:followup').actions[0]
+        ?.actionType,
+    ).toBe('send_thread_message');
   });
 
   it('prunes stale persisted antigravity threads when a live snapshot is available', async () => {

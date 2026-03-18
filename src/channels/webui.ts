@@ -295,6 +295,34 @@ class WebuiChannel implements Channel {
       return;
     }
 
+    if (req.method === 'POST' && urlPath === '/api/threads/message') {
+      const body = await this.readRequestBody(req);
+      const data = JSON.parse(body || '{}') as {
+        threadId?: string;
+        text?: string;
+      };
+
+      if (!data.threadId || typeof data.text !== 'string' || !data.text.trim()) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: 'threadId and non-empty text are required.',
+          }),
+        );
+        return;
+      }
+
+      const result = await this.opts.sendThreadMessage(data.threadId, data.text);
+
+      res.writeHead(result.ok ? 200 : 409, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+      });
+      res.end(JSON.stringify(result));
+      return;
+    }
+
     if (req.method === 'POST' && urlPath === '/api/antigravity/mappings') {
       const body = await this.readRequestBody(req);
       const data = JSON.parse(body || '{}') as {

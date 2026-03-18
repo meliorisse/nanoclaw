@@ -19,6 +19,7 @@ import {
   AgentThread,
   AgentThreadState,
   EffortChangeResult,
+  ThreadMessageResult,
 } from '../types.js';
 
 const execFileAsync = promisify(execFile);
@@ -95,6 +96,15 @@ interface AntigravityTaskSummaryResponse {
   data?: {
     summary: string;
     latestSnapshotExcerpt?: string | null;
+  } | null;
+  warnings?: string[];
+}
+
+interface AntigravitySendMessageResponse {
+  ok: boolean;
+  data?: {
+    delivered?: boolean;
+    message?: string;
   } | null;
   warnings?: string[];
 }
@@ -520,6 +530,59 @@ export class AntigravityProvider {
         summary: null,
         previewMessages: [],
         evidence: [],
+      };
+    }
+  }
+
+  async sendMessage(
+    thread: AgentThread,
+    text: string,
+  ): Promise<ThreadMessageResult> {
+    const metadata = this.parseMetadata(thread.metadataJson);
+    const conversationId =
+      (typeof metadata.conversationId === 'string' && metadata.conversationId) ||
+      null;
+
+    if (!conversationId) {
+      return {
+        ok: false,
+        threadId: thread.id,
+        message:
+          'This Antigravity thread is missing a conversation identifier, so NanoClaw cannot send to it yet.',
+      };
+    }
+
+    try {
+      const result = await this.runTool<AntigravitySendMessageResponse>(
+        'send_message',
+        {
+          conversationId,
+          text,
+        },
+      );
+
+      const warnings = result.warnings?.length
+        ? ` Warnings: ${result.warnings.join(' ')}`
+        : '';
+
+      return {
+        ok: Boolean(result.ok),
+        threadId: thread.id,
+        message:
+          result.data?.message ||
+          (result.ok
+            ? `Sent to Antigravity thread "${thread.title}".${warnings}`
+            : `Failed to send to Antigravity thread "${thread.title}".${warnings}`),
+      };
+    } catch (err) {
+      logger.warn(
+        { err, threadId: thread.id },
+        'Failed to send message to Antigravity thread',
+      );
+      return {
+        ok: false,
+        threadId: thread.id,
+        message: err instanceof Error ? err.message : String(err),
       };
     }
   }

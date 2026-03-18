@@ -1178,6 +1178,7 @@
     let inspectorRefreshInFlight = false;
     let inspectorRefreshVisualTimer = null;
     let statusRefreshIndicatorTimer = null;
+    let threadSendInFlight = false;
     const inspectorCache = new Map();
 
     const STATUS_CACHE_KEY = 'nanoclaw.statusCache.v1';
@@ -1344,12 +1345,14 @@
       setWorkspacePanel('conversation');
       renderInspector(null);
       renderControlHistory();
+      updateComposerMode();
     }
 
     function renderControlHistory() {
       syncChatModeBanner();
       messagesEl.innerHTML = '';
       setMessagesRefreshing(false);
+      updateComposerMode();
 
       if (!controlMessages.length) {
         messagesEl.innerHTML = `
@@ -1397,6 +1400,7 @@
       setWorkspacePanel('conversation');
       messagesEl.innerHTML = '';
       setMessagesRefreshing(inspectorRefreshInFlight);
+      updateComposerMode();
 
       if (!data?.thread) {
         renderControlHistory();
@@ -1530,7 +1534,7 @@
       ws.onclose = () => {
         setStatus('', 'offline');
         connBanner.style.display = 'block';
-        if (isWaiting) { removeWaiting(); isWaiting = false; setInputEnabled(true); }
+        if (isWaiting) { removeWaiting(); isWaiting = false; updateComposerMode(); }
         setTimeout(connect, 3000);
       };
 
@@ -1572,7 +1576,7 @@
           showBotMessage(data.text || '');
           isWaiting = false;
           setStatus('online', 'online');
-          setInputEnabled(true);
+          updateComposerMode();
           return;
         }
         if (data.type === 'notification') {
@@ -1584,7 +1588,7 @@
           showError(data.message || 'An error occurred.');
           isWaiting = false;
           setStatus('online', 'online');
-          setInputEnabled(true);
+          updateComposerMode();
           return;
         }
       };
@@ -1597,16 +1601,93 @@
       if (enabled) inputEl.focus();
     }
 
-    function sendMessage() {
+    function canSendToSelectedThread() {
+      return Boolean(
+        selectedThreadId &&
+        selectedInspector?.thread &&
+        selectedInspector.thread.id === selectedThreadId &&
+        selectedInspector.thread.provider === 'antigravity',
+      );
+    }
+
+    function updateComposerMode() {
+      if (threadSendInFlight) {
+        inputEl.placeholder = 'Sending to selected Antigravity thread…';
+        sendBtn.title = 'Sending to selected Antigravity thread';
+        setInputEnabled(false);
+        return;
+      }
+
+      if (canSendToSelectedThread()) {
+        inputEl.placeholder = `Send to ${selectedInspector.thread.title} in Antigravity…`;
+        sendBtn.title = 'Send to selected Antigravity thread';
+        setInputEnabled(true);
+        return;
+      }
+
+      if (isThreadViewActive()) {
+        inputEl.placeholder =
+          'Viewing a read-only thread transcript. Back to Control Chat to direct NanoClaw.';
+        sendBtn.title = 'Thread view is read-only';
+        setInputEnabled(false);
+        return;
+      }
+
+      inputEl.placeholder = 'Direct nanoclaw…';
+      sendBtn.title = 'Send (Enter)';
+      setInputEnabled(!isWaiting);
+    }
+
+    async function sendMessage() {
       const text = inputEl.value.trim();
-      if (!text || isWaiting || !ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!text || isWaiting || threadSendInFlight) return;
+
+      if (canSendToSelectedThread() && selectedThreadId && selectedInspector?.thread) {
+        const pendingMessage = {
+          role: 'user',
+          author: 'You',
+          text,
+          createdAt: new Date().toISOString(),
+        };
+        selectedInspector = {
+          ...selectedInspector,
+          previewMessages: [...(selectedInspector.previewMessages || []), pendingMessage],
+        };
+        renderInspector(selectedInspector);
+        renderSelectedThreadConversation(selectedInspector);
+        inputEl.value = '';
+        threadSendInFlight = true;
+        updateComposerMode();
+
+        try {
+          const response = await fetch('/api/threads/message', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threadId: selectedThreadId, text }),
+          });
+          const result = await response.json();
+          if (!result.ok) {
+            throw new Error(result.error || result.message || 'Failed to send thread message.');
+          }
+          showAgentUpdate(result.message || 'Sent to selected Antigravity thread.');
+          await loadThreadInspector(selectedThreadId, { background: true });
+        } catch (err) {
+          showError(`Failed to send to selected thread: ${err?.message || err}`);
+        } finally {
+          threadSendInFlight = false;
+          updateComposerMode();
+        }
+        return;
+      }
+
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
       addUserBubble(text);
       ws.send(JSON.stringify({ type: 'message', text }));
       inputEl.value = '';
       isWaiting = true;
-      setInputEnabled(false);
       setStatus('thinking', 'working…');
       showWaiting();
+      updateComposerMode();
     }
 
     inputEl.addEventListener('keydown', (e) => {
@@ -2071,6 +2152,7 @@
     });
     connect();
     chatModeReset?.addEventListener('click', clearSelectedThread);
+    updateComposerMode();
     refreshStatus();
     statusTimer = setInterval(refreshStatus, 2000);
   </script>

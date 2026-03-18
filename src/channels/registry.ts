@@ -5,6 +5,7 @@ import {
   Channel,
   EffortChangeResult,
   AntigravityGroupMapping,
+  ThreadMessageResult,
   OnInboundMessage,
   OnChatMetadata,
   RegisteredGroup,
@@ -29,6 +30,10 @@ export interface ChannelOpts {
   >;
   getThreadTimeline: (threadId: string) => AgentThreadTimeline;
   getThreadInspector: (threadId: string) => Promise<AgentThreadInspector>;
+  sendThreadMessage: (
+    threadId: string,
+    text: string,
+  ) => Promise<ThreadMessageResult>;
 }
 
 export type ChannelFactory = (opts: ChannelOpts) => Channel | null;

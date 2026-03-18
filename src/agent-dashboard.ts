@@ -25,6 +25,7 @@ import {
   EffortChangeResult,
   RegisteredGroup,
   ScheduledTask,
+  ThreadMessageResult,
 } from './types.js';
 import { WEBUI_REFRESH_INTERVAL } from './config.js';
 
@@ -306,6 +307,51 @@ export class AgentDashboardService {
       previewMessages: inspector.previewMessages,
       evidence: inspector.evidence,
     };
+  }
+
+  async sendThreadMessage(
+    threadId: string,
+    text: string,
+  ): Promise<ThreadMessageResult> {
+    const thread = getAgentThread(threadId);
+
+    if (!thread) {
+      return {
+        ok: false,
+        threadId,
+        message: `Unknown thread: ${threadId}`,
+      };
+    }
+
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return {
+        ok: false,
+        threadId,
+        message: 'Message text is required.',
+      };
+    }
+
+    if (thread.provider !== 'antigravity') {
+      return {
+        ok: false,
+        threadId,
+        message:
+          'Direct sending from this thread view is only available for Antigravity conversations right now.',
+      };
+    }
+
+    const result = await this.antigravityProvider.sendMessage(thread, trimmed);
+
+    recordAgentThreadAction({
+      threadId,
+      actionType: 'send_thread_message',
+      targetEffort: thread.effort,
+      status: result.ok ? 'accepted' : 'failed',
+      note: result.message,
+    });
+
+    return result;
   }
 
   private async handleEffortChange(

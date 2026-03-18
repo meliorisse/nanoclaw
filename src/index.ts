@@ -632,6 +632,8 @@ async function main(): Promise<void> {
       dashboardService.getThreadTimeline(threadId),
     getThreadInspector: (threadId: string) =>
       dashboardService.getThreadInspector(threadId),
+    sendThreadMessage: (threadId: string, text: string) =>
+      dashboardService.sendThreadMessage(threadId, text),
   };
 
   // Create and connect all registered channels.
