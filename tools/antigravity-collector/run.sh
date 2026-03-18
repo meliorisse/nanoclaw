@@ -10,5 +10,6 @@ STDERR_LOG="$LOG_DIR/stderr.log"
 mkdir -p "$LOG_DIR"
 
 "$BIN" \
+  "$@" \
   2> >(tee "$STDERR_LOG" >&2) \
   | tee "$STDOUT_LOG"

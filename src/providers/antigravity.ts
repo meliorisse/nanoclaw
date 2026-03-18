@@ -538,6 +538,32 @@ export class AntigravityProvider {
     thread: AgentThread,
     text: string,
   ): Promise<ThreadMessageResult> {
+    if (ANTIGRAVITY_SCREEN_TEXT_COMMAND) {
+      try {
+        await execFileAsync(
+          ANTIGRAVITY_SCREEN_TEXT_COMMAND,
+          ['--send-text', text, '--conversation-title', thread.title],
+          {
+            timeout: 15000,
+            env: {
+              ...process.env,
+            },
+          },
+        );
+
+        return {
+          ok: true,
+          threadId: thread.id,
+          message: `Sent to Antigravity thread "${thread.title}".`,
+        };
+      } catch (err) {
+        logger.warn(
+          { err, threadId: thread.id },
+          'Helper-based send to Antigravity thread failed',
+        );
+      }
+    }
+
     const metadata = this.parseMetadata(thread.metadataJson);
     const conversationId =
       (typeof metadata.conversationId === 'string' &&
