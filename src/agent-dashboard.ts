@@ -129,7 +129,9 @@ export class AgentDashboardService {
 
   async getSnapshot(): Promise<AgentDashboardSnapshot> {
     const storedThreads = listAgentThreads();
-    const existingThreads = new Map(storedThreads.map((thread) => [thread.id, thread]));
+    const existingThreads = new Map(
+      storedThreads.map((thread) => [thread.id, thread]),
+    );
     const tasks = getAllTasks();
     const localThreads = buildLocalThreads({
       registeredGroups: this.registeredGroups(),
