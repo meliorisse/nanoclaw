@@ -74,6 +74,8 @@ export { escapeXml, formatMessages } from './router.js';
 
 const HOST_PROMPT_BYTE_BUDGET = 64 * 1024;
 const ACTIVE_HOST_MESSAGE_BYTE_BUDGET = 32 * 1024;
+const WEBUI_CONTROL_HOST_PROMPT_BYTE_BUDGET = 8 * 1024;
+const WEBUI_CONTROL_ACTIVE_MESSAGE_BYTE_BUDGET = 4 * 1024;
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -198,7 +200,10 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // leaving room for the SDK's system/tool scaffolding plus the active turn.
   const HISTORY_CHAR_BUDGET = 18_000;
 
-  let promptBudget = HOST_PROMPT_BYTE_BUDGET;
+  const isWebUiControlGroup = group.folder === 'webui_control';
+  let promptBudget = isWebUiControlGroup
+    ? WEBUI_CONTROL_HOST_PROMPT_BYTE_BUDGET
+    : HOST_PROMPT_BYTE_BUDGET;
   const currentPrompt = formatMessagesWithinBudget(
     missedMessages,
     TIMEZONE,
@@ -490,13 +495,16 @@ async function startMessageLoop(): Promise<void> {
             lastAgentTimestamp[chatJid] || '',
             ASSISTANT_NAME,
           );
+          const isWebUiControlGroup = group.folder === 'webui_control';
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
           const formattedResult = group.hostMode
             ? formatMessagesWithinBudget(
                 messagesToSend,
                 TIMEZONE,
-                ACTIVE_HOST_MESSAGE_BYTE_BUDGET,
+                isWebUiControlGroup
+                  ? WEBUI_CONTROL_ACTIVE_MESSAGE_BYTE_BUDGET
+                  : ACTIVE_HOST_MESSAGE_BYTE_BUDGET,
               )
             : {
                 formatted: formatMessages(messagesToSend, TIMEZONE),

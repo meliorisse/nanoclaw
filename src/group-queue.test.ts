@@ -433,6 +433,39 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
   });
 
+  it('preempts an active task container when a new message check is enqueued', async () => {
+    const fs = await import('fs');
+    let resolveTask: () => void;
+
+    const taskFn = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        resolveTask = resolve;
+      });
+    });
+
+    queue.enqueueTask('group1@g.us', 'task-1', taskFn);
+    await vi.advanceTimersByTimeAsync(10);
+    queue.registerProcess(
+      'group1@g.us',
+      {} as any,
+      'container-1',
+      'test-group',
+    );
+
+    const writeFileSync = vi.mocked(fs.default.writeFileSync);
+    writeFileSync.mockClear();
+
+    queue.enqueueMessageCheck('group1@g.us');
+
+    const closeWrites = writeFileSync.mock.calls.filter(
+      (call) => typeof call[0] === 'string' && call[0].endsWith('_close'),
+    );
+    expect(closeWrites).toHaveLength(1);
+
+    resolveTask!();
+    await vi.advanceTimersByTimeAsync(10);
+  });
+
   it('preempts when idle arrives with pending tasks', async () => {
     const fs = await import('fs');
     let resolveProcess: () => void;

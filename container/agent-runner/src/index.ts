@@ -74,6 +74,23 @@ const INTERACTIVE_ALLOWED_TOOLS = [
   'mcp__nanoclaw__*',
 ];
 
+const WEBUI_CONTROL_BUILTIN_TOOLS = [
+  'Bash',
+  'Read',
+  'Write',
+  'Edit',
+  'Glob',
+  'Grep',
+  'WebFetch',
+  'WebSearch',
+  'TodoWrite',
+];
+
+const WEBUI_CONTROL_ALLOWED_TOOLS = [
+  ...WEBUI_CONTROL_BUILTIN_TOOLS,
+  'mcp__nanoclaw__*',
+];
+
 const SCHEDULED_TASK_ALLOWED_TOOLS = [
   'Bash',
 ];
@@ -418,10 +435,18 @@ async function runQuery(
   }
 
   const isScheduledTask = containerInput.isScheduledTask === true;
+  const isWebUiControlInteractive =
+    !isScheduledTask && containerInput.groupFolder === 'webui_control';
   const allowedTools = isScheduledTask
     ? SCHEDULED_TASK_ALLOWED_TOOLS
+    : isWebUiControlInteractive
+      ? WEBUI_CONTROL_ALLOWED_TOOLS
     : INTERACTIVE_ALLOWED_TOOLS;
-  const tools = isScheduledTask ? SCHEDULED_TASK_ALLOWED_TOOLS : undefined;
+  const tools = isScheduledTask
+    ? SCHEDULED_TASK_ALLOWED_TOOLS
+    : isWebUiControlInteractive
+      ? WEBUI_CONTROL_BUILTIN_TOOLS
+      : undefined;
   const mcpServers = isScheduledTask
     ? undefined
     : {
@@ -449,6 +474,8 @@ async function runQuery(
 
   if (isScheduledTask) {
     log('Using lean scheduled-task query profile');
+  } else if (isWebUiControlInteractive) {
+    log('Using lean WebUI Control query profile');
   }
 
   for await (const message of query({

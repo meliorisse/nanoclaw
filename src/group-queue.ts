@@ -78,6 +78,13 @@ export class GroupQueue {
 
     if (state.active) {
       state.pendingMessages = true;
+      if (state.isTaskContainer) {
+        logger.info(
+          { groupJid, runningTaskId: state.runningTaskId },
+          'Preempting active task container for queued user messages',
+        );
+        this.closeStdin(groupJid);
+      }
       logger.debug({ groupJid }, 'Container active, message queued');
       return;
     }
