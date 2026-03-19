@@ -415,11 +415,11 @@ export class AgentDashboardService {
     );
 
     const resolvedMappedProject = mapping
-      ? snapshot.projects.find(
+      ? (snapshot.projects.find(
           (candidate) =>
             candidate.projectId === mapping?.projectId ||
             candidate.projectRef === mapping?.projectRef,
-        ) ?? null
+        ) ?? null)
       : null;
 
     if (mapping && !resolvedMappedProject) {
@@ -428,7 +428,9 @@ export class AgentDashboardService {
 
     if (!mapping && group.folder === 'webui_control') {
       const fallbackProject =
-        snapshot.projects.find((candidate) => candidate.projectRef === 'nanoclaw') ??
+        snapshot.projects.find(
+          (candidate) => candidate.projectRef === 'nanoclaw',
+        ) ??
         snapshot.projects[0] ??
         null;
 
