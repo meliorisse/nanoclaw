@@ -18,7 +18,10 @@ import { readEnvFile } from './env.js';
 import { logger } from './logger.js';
 
 const MAX_OUTPUT_TOKENS = 4000;
-const LOCAL_MODEL_INPUT_TOKEN_LIMIT = 31000;
+// LM Studio is now configured for a 65,536-token context window. Keep a
+// meaningful reserve for output tokens and estimator drift instead of trying to
+// consume the full ceiling.
+const LOCAL_MODEL_INPUT_TOKEN_LIMIT = 48_000;
 
 function estimateLocalModelInputTokens(body: Record<string, unknown>): number {
   // Conservative heuristic for Anthropic-style payloads headed to LM Studio.

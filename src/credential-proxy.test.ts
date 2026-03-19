@@ -234,7 +234,7 @@ describe('credential-proxy', () => {
   it('rejects oversized local model messages requests before LM Studio sees them', async () => {
     proxyPort = await startProxy({ ANTHROPIC_API_KEY: 'sk-ant-real-key' });
 
-    const huge = 'x'.repeat(130_000);
+    const huge = 'x'.repeat(180_000);
     const res = await makeRequest(
       proxyPort,
       {
