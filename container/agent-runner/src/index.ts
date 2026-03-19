@@ -96,11 +96,15 @@ When the user asks you to inspect, launch, or message Antigravity work, use the 
 
 - Use mcp__nanoclaw__get_agent_dashboard to inspect live local and Antigravity threads.
 - Use mcp__nanoclaw__get_thread_history to read an Antigravity thread transcript.
+- Use mcp__nanoclaw__wait_for_thread_update to check back in on a launched or assigned thread until its report changes.
 - Use mcp__nanoclaw__launch_antigravity_prompt to start a new mapped Antigravity prompt for this group.
 - Use mcp__nanoclaw__send_antigravity_message only when the user explicitly wants to reuse or continue an existing Antigravity thread.
 - If the user asks for a new Antigravity test, a new Antigravity thread, or a fresh high-effort run, default to mcp__nanoclaw__launch_antigravity_prompt.
 - Do not substitute an existing idle thread when the user asked for a new thread unless they explicitly approve that fallback.
 - Do not probe NanoClaw or Antigravity localhost HTTP APIs with Bash or WebFetch when an MCP tool already exists for that action.
+- For a new Antigravity assignment, put the actual task or smoke-test instruction into the launch brief itself.
+- After launch_antigravity_prompt succeeds, keep the returned threadId and use get_thread_history or wait_for_thread_update on that same thread to review progress or results.
+- Do not send a second Antigravity message merely to verify a fresh launch unless the user explicitly asked for a follow-up interaction.
 
 Do not claim you launched or tested Antigravity unless a tool call succeeded.
 `.trim();
@@ -271,7 +275,7 @@ function applyWebUiControlRoutingHints(text: string, enabled: boolean): string {
 
   return `${text}
 
-[ROUTING REQUIREMENT: The user explicitly asked for a NEW Antigravity thread. Use mcp__nanoclaw__launch_antigravity_prompt for this request. Do not use mcp__nanoclaw__send_antigravity_message. Do not probe localhost APIs with Bash or WebFetch when an MCP tool exists. After the tool call, report the exact MCP tool name used and its result.]`;
+[ROUTING REQUIREMENT: The user explicitly asked for a NEW Antigravity thread. Use mcp__nanoclaw__launch_antigravity_prompt for this request. Put the requested test or assignment directly into the launch brief. Do not use mcp__nanoclaw__send_antigravity_message unless the user explicitly asks for a follow-up interaction with an existing thread. After launch, keep the returned threadId and verify progress with mcp__nanoclaw__get_thread_history or mcp__nanoclaw__wait_for_thread_update. Do not probe localhost APIs with Bash or WebFetch when an MCP tool exists. After the tool call, report the exact MCP tool name used and its result.]`;
 }
 
 interface ParsedMessage {

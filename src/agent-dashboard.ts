@@ -408,15 +408,29 @@ export class AgentDashboardService {
       };
     }
 
+    const snapshot = await this.antigravityProvider.getSnapshot(true);
+
     let mapping = listAntigravityGroupMappings().find(
       (candidate) => candidate.groupJid === groupJid,
     );
 
+    const resolvedMappedProject = mapping
+      ? snapshot.projects.find(
+          (candidate) =>
+            candidate.projectId === mapping?.projectId ||
+            candidate.projectRef === mapping?.projectRef,
+        ) ?? null
+      : null;
+
+    if (mapping && !resolvedMappedProject) {
+      mapping = undefined;
+    }
+
     if (!mapping && group.folder === 'webui_control') {
-      const snapshot = await this.antigravityProvider.getSnapshot(true);
-      const fallbackProject = snapshot.projects.find(
-        (candidate) => candidate.projectRef === 'nanoclaw',
-      );
+      const fallbackProject =
+        snapshot.projects.find((candidate) => candidate.projectRef === 'nanoclaw') ??
+        snapshot.projects[0] ??
+        null;
 
       if (fallbackProject) {
         mapping = {
@@ -426,6 +440,7 @@ export class AgentDashboardService {
           projectName: fallbackProject.name,
           updatedAt: new Date().toISOString(),
         };
+        upsertAntigravityGroupMapping(mapping);
       }
     }
 

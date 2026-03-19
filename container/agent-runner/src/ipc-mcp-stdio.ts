@@ -65,6 +65,18 @@ async function callNanoclawApi(
   return json;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function buildThreadHistoryFingerprint(data: unknown): string {
+  const payload =
+    data && typeof data === 'object' && 'data' in data
+      ? (data as { data?: unknown }).data
+      : data;
+  return JSON.stringify(payload ?? null);
+}
+
 const server = new McpServer({
   name: 'nanoclaw',
   version: '1.0.0',
@@ -174,6 +186,96 @@ server.tool(
 );
 
 server.tool(
+  'wait_for_thread_update',
+  'Poll a local or Antigravity thread until its visible history/summary changes or a timeout is reached. Use this after launching or assigning external work when you need a reliable check-in instead of sending another message immediately.',
+  {
+    thread_id: z.string().describe('The thread ID from get_agent_dashboard or launch_antigravity_prompt.'),
+    timeout_seconds: z
+      .number()
+      .int()
+      .min(5)
+      .max(180)
+      .optional()
+      .describe('How long to wait for a change before returning. Defaults to 45 seconds.'),
+    poll_seconds: z
+      .number()
+      .int()
+      .min(1)
+      .max(15)
+      .optional()
+      .describe('Polling interval in seconds. Defaults to 3 seconds.'),
+  },
+  async (args) => {
+    const timeoutMs = (args.timeout_seconds ?? 45) * 1000;
+    const pollMs = (args.poll_seconds ?? 3) * 1000;
+    const deadline = Date.now() + timeoutMs;
+
+    try {
+      const initial = await callNanoclawApi(
+        `/api/threads/inspector?threadId=${encodeURIComponent(args.thread_id)}`,
+      );
+      const initialFingerprint = buildThreadHistoryFingerprint(initial);
+
+      let latest = initial;
+      while (Date.now() < deadline) {
+        await sleep(pollMs);
+        latest = await callNanoclawApi(
+          `/api/threads/inspector?threadId=${encodeURIComponent(args.thread_id)}`,
+        );
+        const latestFingerprint = buildThreadHistoryFingerprint(latest);
+        if (latestFingerprint !== initialFingerprint) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify(
+                  {
+                    ok: true,
+                    changed: true,
+                    waitedSeconds: Math.round((timeoutMs - (deadline - Date.now())) / 1000),
+                    data: latest,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          };
+        }
+      }
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                ok: true,
+                changed: false,
+                waitedSeconds: Math.round(timeoutMs / 1000),
+                data: latest,
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Failed while waiting for thread update: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
   'send_antigravity_message',
   'Send a message to an existing Antigravity thread by NanoClaw thread ID. Use this only when the user explicitly wants an existing thread reused or continued, not when they asked for a new Antigravity thread.',
   {
@@ -209,7 +311,7 @@ server.tool(
 
 server.tool(
   'launch_antigravity_prompt',
-  'Launch a new high-effort Antigravity prompt for the current mapped NanoClaw group. Prefer this when the user asks for a new Antigravity thread, a fresh test, or a brand-new high-effort run.',
+  'Launch a new high-effort Antigravity prompt for the current mapped NanoClaw group. Prefer this when the user asks for a new Antigravity thread, a fresh test, or a brand-new high-effort run. Put the actual assignment in the brief. The result includes the launched threadId; use get_thread_history or wait_for_thread_update on that threadId to review the external agent instead of sending a second message immediately.',
   {
     brief: z.string().describe('The prompt or brief to launch on Antigravity.'),
     target_group_jid: z.string().optional().describe('(Main group only) target NanoClaw group JID. Defaults to the current group.'),
