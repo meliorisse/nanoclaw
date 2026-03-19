@@ -21,6 +21,13 @@ import {
   EffortChangeResult,
   ThreadMessageResult,
 } from '../types.js';
+import {
+  buildLaunchContractInstruction,
+  buildMessageContractInstruction,
+  createLaunchOutputContract,
+  getThreadOutputContract,
+  parseArtifactPayload,
+} from './antigravity-output-contract.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -50,6 +57,9 @@ interface AntigravityCreateFollowupResponse {
     conversationRef?: string | null;
     conversationId?: string | null;
     message?: string;
+    artifactContractId?: string | null;
+    artifactJsonPath?: string | null;
+    artifactMarkdownPath?: string | null;
   } | null;
   warnings?: string[];
 }
@@ -372,13 +382,27 @@ export class AntigravityProvider {
     }
 
     try {
+      const contract = createLaunchOutputContract({
+        projectRef: input.projectId,
+        groupJid: 'launch',
+      });
       return await this.runTool<AntigravityCreateFollowupResponse>(
         'create_followup_agent',
         {
           projectId: input.projectId,
-          brief: input.brief,
+          brief: `${input.brief}\n\n${buildLaunchContractInstruction(contract)}`,
         },
-      );
+      ).then((result) => ({
+        ...result,
+        data: result.data
+          ? {
+              ...result.data,
+              artifactContractId: contract.contractId,
+              artifactJsonPath: contract.jsonPath,
+              artifactMarkdownPath: contract.markdownPath,
+            }
+          : result.data,
+      }));
     } catch (err) {
       logger.warn(
         { err, projectId: input.projectId },
@@ -393,6 +417,31 @@ export class AntigravityProvider {
   }
 
   async buildPullbackContext(thread: AgentThread): Promise<string | null> {
+    const artifact = parseArtifactPayload(thread);
+    if (artifact?.summary || artifact?.previewMessages.length) {
+      const latestUserMessage = [...artifact.previewMessages]
+        .reverse()
+        .find((message) => message.role === 'user')?.text;
+      const latestAssistantMessage = [...artifact.previewMessages]
+        .reverse()
+        .find((message) => message.role === 'assistant')?.text;
+
+      const parts = [
+        `Antigravity thread: ${thread.title}.`,
+        artifact.summary ? `Task summary: ${artifact.summary}` : null,
+        latestUserMessage
+          ? `Latest user request: ${this.truncate(latestUserMessage, 260)}`
+          : null,
+        latestAssistantMessage
+          ? `Latest Antigravity update: ${this.truncate(latestAssistantMessage, 360)}`
+          : null,
+      ].filter(Boolean);
+
+      if (parts.length > 0) {
+        return parts.join(' ');
+      }
+    }
+
     const metadata = this.parseMetadata(thread.metadataJson);
     const conversationIdentifier =
       (typeof metadata.conversationId === 'string' &&
@@ -464,6 +513,18 @@ export class AntigravityProvider {
   async getThreadInspector(
     thread: AgentThread,
   ): Promise<AntigravityThreadInspector> {
+    const artifact = parseArtifactPayload(thread);
+    if (artifact) {
+      return {
+        summary: artifact.summary,
+        previewMessages: artifact.previewMessages.map((message) => ({
+          ...message,
+          text: this.truncate(message.text, 4000),
+        })),
+        evidence: artifact.evidence,
+      };
+    }
+
     const metadata = this.parseMetadata(thread.metadataJson);
     const conversationIdentifier =
       (typeof metadata.conversationId === 'string' &&
@@ -564,11 +625,19 @@ export class AntigravityProvider {
     thread: AgentThread,
     text: string,
   ): Promise<ThreadMessageResult> {
+    const contract = getThreadOutputContract(thread);
+    const enrichedText = `${text}\n\n${buildMessageContractInstruction(contract)}`;
+
     if (ANTIGRAVITY_SCREEN_TEXT_COMMAND) {
       try {
         await execFileAsync(
           ANTIGRAVITY_SCREEN_TEXT_COMMAND,
-          ['--send-text', text, '--conversation-title', thread.title],
+          [
+            '--send-text',
+            enrichedText,
+            '--conversation-title',
+            thread.title,
+          ],
           {
             timeout: 15000,
             env: {
@@ -635,7 +704,7 @@ export class AntigravityProvider {
         'send_message',
         {
           conversationId,
-          text,
+          text: enrichedText,
         },
       );
 

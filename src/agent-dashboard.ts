@@ -477,6 +477,9 @@ export class AgentDashboardService {
           projectRef: mapping.projectRef,
           projectName: mapping.projectName,
           conversationId: launch.data.conversationId ?? null,
+          artifactContractId: launch.data.artifactContractId ?? null,
+          artifactJsonPath: launch.data.artifactJsonPath ?? null,
+          artifactMarkdownPath: launch.data.artifactMarkdownPath ?? null,
         }),
       });
 
@@ -582,6 +585,9 @@ export class AgentDashboardService {
           projectRef: mapping.projectRef,
           projectName: mapping.projectName,
           conversationId: escalation.data.conversationId ?? null,
+          artifactContractId: escalation.data.artifactContractId ?? null,
+          artifactJsonPath: escalation.data.artifactJsonPath ?? null,
+          artifactMarkdownPath: escalation.data.artifactMarkdownPath ?? null,
         }),
       });
 

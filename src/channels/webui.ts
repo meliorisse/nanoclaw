@@ -368,7 +368,11 @@ class WebuiChannel implements Channel {
         brief?: string;
       };
 
-      if (!data.groupJid || typeof data.brief !== 'string' || !data.brief.trim()) {
+      if (
+        !data.groupJid ||
+        typeof data.brief !== 'string' ||
+        !data.brief.trim()
+      ) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
