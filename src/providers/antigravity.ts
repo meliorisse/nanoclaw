@@ -30,6 +30,8 @@ import {
 } from './antigravity-output-contract.js';
 
 const execFileAsync = promisify(execFile);
+const ANTIGRAVITY_READ_TIMEOUT_MS = 15_000;
+const ANTIGRAVITY_ACTION_TIMEOUT_MS = 90_000;
 
 interface AntigravityOverviewResponse {
   ok: boolean;
@@ -191,6 +193,7 @@ export class AntigravityProvider {
   private async runTool<T>(
     tool: string,
     args: Record<string, unknown> = {},
+    timeoutMs = ANTIGRAVITY_READ_TIMEOUT_MS,
   ): Promise<T> {
     const entry = path.join(ANTIGRAVITY_OVERSEER_DIR, ANTIGRAVITY_MCP_ENTRY);
 
@@ -199,7 +202,7 @@ export class AntigravityProvider {
       ['--experimental-strip-types', entry, tool, JSON.stringify(args)],
       {
         cwd: ANTIGRAVITY_OVERSEER_DIR,
-        timeout: 15000,
+        timeout: timeoutMs,
         env: {
           ...process.env,
           OVERSEER_LOG_LEVEL: process.env.OVERSEER_LOG_LEVEL || 'error',
@@ -392,6 +395,7 @@ export class AntigravityProvider {
           projectId: input.projectId,
           brief: `${input.brief}\n\n${buildLaunchContractInstruction(contract)}`,
         },
+        ANTIGRAVITY_ACTION_TIMEOUT_MS,
       ).then((result) => ({
         ...result,
         data: result.data
@@ -634,7 +638,7 @@ export class AntigravityProvider {
           ANTIGRAVITY_SCREEN_TEXT_COMMAND,
           ['--send-text', enrichedText, '--conversation-title', thread.title],
           {
-            timeout: 15000,
+            timeout: ANTIGRAVITY_ACTION_TIMEOUT_MS,
             env: {
               ...process.env,
             },

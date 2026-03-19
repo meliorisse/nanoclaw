@@ -13,6 +13,7 @@ TMP_DIR="$(mktemp -d "$LOG_DIR/run.XXXXXX")"
 OUT_FILE="$TMP_DIR/stdout.txt"
 ERR_FILE="$TMP_DIR/stderr.txt"
 CODE_FILE="$TMP_DIR/exit_code.txt"
+WAIT_STEPS="${ANTIGRAVITY_COLLECTOR_WAIT_STEPS:-1200}"
 
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -25,7 +26,7 @@ open -n -a "$APP" --args \
   --stderr-file "$ERR_FILE" \
   --exit-code-file "$CODE_FILE"
 
-for _ in $(seq 1 300); do
+for _ in $(seq 1 "$WAIT_STEPS"); do
   if [ -f "$CODE_FILE" ]; then
     break
   fi

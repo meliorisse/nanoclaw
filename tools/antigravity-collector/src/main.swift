@@ -1169,6 +1169,27 @@ private func visibleWindowContainsText(
   return false
 }
 
+private func deliveryProbeText(for text: String) -> String {
+  let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+  guard !trimmed.isEmpty else {
+    return trimmed
+  }
+
+  let contractMarker = "NanoClaw output contract"
+  let primary = trimmed.components(separatedBy: contractMarker).first ?? trimmed
+  let normalized = primary
+    .replacingOccurrences(of: "\r", with: "\n")
+    .split(separator: "\n")
+    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    .first(where: { !$0.isEmpty }) ?? trimmed
+
+  if normalized.count <= 180 {
+    return normalized
+  }
+
+  return String(normalized.prefix(180))
+}
+
 @discardableResult
 private func clickApprovalButtonIfPresent(
   app: NSRunningApplication,
@@ -1257,6 +1278,7 @@ let appPid = app.processIdentifier
 if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndNewlines),
   !launchBrief.isEmpty
 {
+  let launchProbeText = deliveryProbeText(for: launchBrief)
   app.activate(options: [])
   usleep(300_000)
 
@@ -1323,7 +1345,7 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         app: app,
         appElement: appElement,
         config: config,
-        text: launchBrief
+        text: launchProbeText
       ) {
         finishSuccessfulDispatch(
           "launched",
@@ -1344,7 +1366,7 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         app: app,
         appElement: appElement,
         config: config,
-        text: launchBrief
+        text: launchProbeText
       ) {
         finishSuccessfulDispatch(
           "launched",
@@ -1358,7 +1380,7 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         app: app,
         appElement: appElement,
         config: config,
-        text: launchBrief
+        text: launchProbeText
       ) {
         finishSuccessfulDispatch(
           "launched",
@@ -1371,7 +1393,7 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         app: app,
         appElement: appElement,
         config: config,
-        text: launchBrief
+        text: launchProbeText
       ) {
         finishSuccessfulDispatch(
           "launched",
@@ -1408,7 +1430,7 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
       app: app,
       appElement: appElement,
       config: config,
-      text: launchBrief
+      text: launchProbeText
     ) {
       finishSuccessfulDispatch(
         "launched",
@@ -1422,7 +1444,7 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
       app: app,
       appElement: appElement,
       config: config,
-      text: launchBrief
+      text: launchProbeText
     ) {
       finishSuccessfulDispatch(
         "launched",
@@ -1435,7 +1457,7 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
       app: app,
       appElement: appElement,
       config: config,
-      text: launchBrief
+      text: launchProbeText
     ) {
       finishSuccessfulDispatch(
         "launched",
@@ -1453,6 +1475,7 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
 }
 
 if let sendText = config.sendText {
+  let sendProbeText = deliveryProbeText(for: sendText)
   app.activate(options: [])
   usleep(300_000)
 
@@ -1532,7 +1555,7 @@ if let sendText = config.sendText {
         app: app,
         appElement: appElement,
         config: config,
-        text: sendText
+        text: sendProbeText
       ) {
         finishSuccessfulDispatch(
           "sent",
@@ -1553,7 +1576,7 @@ if let sendText = config.sendText {
         app: app,
         appElement: appElement,
         config: config,
-        text: sendText
+        text: sendProbeText
       ) {
         finishSuccessfulDispatch(
           "sent",
@@ -1567,7 +1590,7 @@ if let sendText = config.sendText {
         app: app,
         appElement: appElement,
         config: config,
-        text: sendText
+        text: sendProbeText
       ) {
         finishSuccessfulDispatch(
           "sent",
@@ -1580,7 +1603,7 @@ if let sendText = config.sendText {
         app: app,
         appElement: appElement,
         config: config,
-        text: sendText
+        text: sendProbeText
       ) {
         finishSuccessfulDispatch(
           "sent",
@@ -1617,7 +1640,7 @@ if let sendText = config.sendText {
       app: app,
       appElement: appElement,
       config: config,
-      text: sendText
+      text: sendProbeText
     ) {
       finishSuccessfulDispatch(
         "sent",
@@ -1631,7 +1654,7 @@ if let sendText = config.sendText {
       app: app,
       appElement: appElement,
       config: config,
-      text: sendText
+      text: sendProbeText
     ) {
       finishSuccessfulDispatch(
         "sent",
@@ -1644,7 +1667,7 @@ if let sendText = config.sendText {
       app: app,
       appElement: appElement,
       config: config,
-      text: sendText
+      text: sendProbeText
     ) {
       finishSuccessfulDispatch(
         "sent",
