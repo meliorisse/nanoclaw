@@ -154,7 +154,9 @@ function summarizeHistorySnippet(content: string): string {
 
   const codeFenceIndex = normalized.indexOf('```');
   const source =
-    codeFenceIndex >= 0 ? normalized.slice(0, codeFenceIndex).trim() : normalized;
+    codeFenceIndex >= 0
+      ? normalized.slice(0, codeFenceIndex).trim()
+      : normalized;
   const summary = source.length > 120 ? `${source.slice(0, 117)}...` : source;
   return summary;
 }
@@ -181,7 +183,11 @@ function scoreHistoryMessage(message: NewMessage, index: number): number {
   if (message.is_from_me) score += 4;
   if (message.is_bot_message) score += 4;
   if (text.includes('```')) score += 5;
-  if (/(error|failed|exception|trace|stack|bug|fix|launch|prompt|result)/i.test(text)) {
+  if (
+    /(error|failed|exception|trace|stack|bug|fix|launch|prompt|result)/i.test(
+      text,
+    )
+  ) {
     score += 4;
   }
   if (/[/?]/.test(text)) score += 2;
@@ -252,7 +258,12 @@ export function formatHistoryWithinBudget(
       selectedIndices.add(index);
     }
 
-    result = buildHistoryWindow(messages, selectedIndices, timezone, summaryLines);
+    result = buildHistoryWindow(
+      messages,
+      selectedIndices,
+      timezone,
+      summaryLines,
+    );
 
     while (
       summaryLines > 0 &&

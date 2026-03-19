@@ -165,12 +165,36 @@ describe('formatHistoryWithinBudget', () => {
 
   it('keeps recent history plus a summary of omitted middle context', () => {
     const messages = [
-      makeMsg({ id: '1', sender_name: 'Alice', content: 'Initial problem statement' }),
-      makeMsg({ id: '2', sender_name: 'Bob', content: `Routine ack one${filler}` }),
-      makeMsg({ id: '3', sender_name: 'Bob', content: `Routine ack two${filler}` }),
-      makeMsg({ id: '4', sender_name: 'Alice', content: `Routine ack three${filler}` }),
-      makeMsg({ id: '5', sender_name: 'Alice', content: 'Latest detail that must remain' }),
-      makeMsg({ id: '6', sender_name: 'Bob', content: 'Latest answer that must remain' }),
+      makeMsg({
+        id: '1',
+        sender_name: 'Alice',
+        content: 'Initial problem statement',
+      }),
+      makeMsg({
+        id: '2',
+        sender_name: 'Bob',
+        content: `Routine ack one${filler}`,
+      }),
+      makeMsg({
+        id: '3',
+        sender_name: 'Bob',
+        content: `Routine ack two${filler}`,
+      }),
+      makeMsg({
+        id: '4',
+        sender_name: 'Alice',
+        content: `Routine ack three${filler}`,
+      }),
+      makeMsg({
+        id: '5',
+        sender_name: 'Alice',
+        content: 'Latest detail that must remain',
+      }),
+      makeMsg({
+        id: '6',
+        sender_name: 'Bob',
+        content: 'Latest answer that must remain',
+      }),
     ];
     const full = formatMessages(messages, TZ);
     const budget = Buffer.byteLength(full, 'utf8') - 1200;
@@ -190,19 +214,43 @@ describe('formatHistoryWithinBudget', () => {
   it('retains an important middle error report instead of dropping only from the front', () => {
     const messages = [
       makeMsg({ id: '1', sender_name: 'Alice', content: 'Opening context' }),
-      makeMsg({ id: '2', sender_name: 'Bob', content: `light chatter one${filler}` }),
+      makeMsg({
+        id: '2',
+        sender_name: 'Bob',
+        content: `light chatter one${filler}`,
+      }),
       makeMsg({
         id: '3',
         sender_name: 'Alice',
         content:
           'Critical error report: launch failed with stack trace in /tmp/example.log',
       }),
-      makeMsg({ id: '4', sender_name: 'Bob', content: `light chatter two${filler}` }),
-      makeMsg({ id: '5', sender_name: 'Bob', content: `light chatter three${filler}` }),
-      makeMsg({ id: '6', sender_name: 'Bob', content: `light chatter four${filler}` }),
-      makeMsg({ id: '7', sender_name: 'Bob', content: `light chatter five${filler}` }),
+      makeMsg({
+        id: '4',
+        sender_name: 'Bob',
+        content: `light chatter two${filler}`,
+      }),
+      makeMsg({
+        id: '5',
+        sender_name: 'Bob',
+        content: `light chatter three${filler}`,
+      }),
+      makeMsg({
+        id: '6',
+        sender_name: 'Bob',
+        content: `light chatter four${filler}`,
+      }),
+      makeMsg({
+        id: '7',
+        sender_name: 'Bob',
+        content: `light chatter five${filler}`,
+      }),
       makeMsg({ id: '8', sender_name: 'Alice', content: 'Newest request' }),
-      makeMsg({ id: '9', sender_name: 'Bob', content: 'Newest acknowledgement' }),
+      makeMsg({
+        id: '9',
+        sender_name: 'Bob',
+        content: 'Newest acknowledgement',
+      }),
     ];
     const full = formatMessages(messages, TZ);
     const budget = Buffer.byteLength(full, 'utf8') - 2200;
