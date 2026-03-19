@@ -8,7 +8,10 @@ import {
   upsertAgentThread,
 } from './db.js';
 import { buildLocalThreads, sortThreads } from './agent-dashboard.js';
-import { extractTrailingJson } from './providers/antigravity.js';
+import {
+  extractTrailingJson,
+  mergeAntigravityInspector,
+} from './providers/antigravity.js';
 import { AgentDashboardService } from './agent-dashboard.js';
 
 describe('agent dashboard scaffolding', () => {
@@ -118,6 +121,65 @@ describe('agent dashboard scaffolding', () => {
       ok: true,
       data: { warnings: [] },
     });
+  });
+
+  it('keeps a richer cached antigravity transcript when a refresh comes back sparse', () => {
+    const merged = mergeAntigravityInspector(
+      {
+        summary: 'Task "Sunomusic" is currently assigned.',
+        previewMessages: [
+          {
+            role: 'user',
+            author: 'User',
+            text: 'Please redo the remaster with more volume.',
+            createdAt: null,
+          },
+          {
+            role: 'assistant',
+            author: 'Antigravity',
+            text: 'I will rebuild the master from the source stems.',
+            createdAt: null,
+          },
+        ],
+        evidence: [],
+      },
+      {
+        summary:
+          'Task "Sunomusic" is currently assigned. Latest visible UI state: loading.',
+        previewMessages: [],
+        evidence: [],
+      },
+    );
+
+    expect(merged?.previewMessages).toHaveLength(2);
+    expect(merged?.previewMessages[0]?.text).toContain('redo the remaster');
+    expect(merged?.summary).toBe('Task "Sunomusic" is currently assigned.');
+  });
+
+  it('accepts a richer incoming antigravity transcript when it improves on the cache', () => {
+    const merged = mergeAntigravityInspector(
+      {
+        summary:
+          'Task "Sunomusic" is currently assigned. Latest visible UI state: loading.',
+        previewMessages: [],
+        evidence: [],
+      },
+      {
+        summary: 'Task "Sunomusic" is currently assigned.',
+        previewMessages: [
+          {
+            role: 'assistant',
+            author: 'Antigravity',
+            text: 'Full remaster complete.',
+            createdAt: null,
+          },
+        ],
+        evidence: [],
+      },
+    );
+
+    expect(merged?.previewMessages).toHaveLength(1);
+    expect(merged?.summary).toBe('Task "Sunomusic" is currently assigned.');
   });
 
   it('creates a mapped Antigravity escalation for a local thread', async () => {
@@ -704,7 +766,10 @@ describe('agent dashboard scaffolding', () => {
             warnings: [],
           };
         },
-        async sendMessage(thread: { id: string; metadataJson: string | null }, text: string) {
+        async sendMessage(
+          thread: { id: string; metadataJson: string | null },
+          text: string,
+        ) {
           return sendMessage(thread, text);
         },
       } as any,
@@ -712,7 +777,9 @@ describe('agent dashboard scaffolding', () => {
 
     const snapshot = await service.getSnapshot();
     expect(
-      snapshot.threads.some((thread) => thread.id === 'antigravity:tge:sunomusic-remaster-redo'),
+      snapshot.threads.some(
+        (thread) => thread.id === 'antigravity:tge:sunomusic-remaster-redo',
+      ),
     ).toBe(true);
 
     const result = await service.sendThreadMessage(

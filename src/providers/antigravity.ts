@@ -134,6 +134,66 @@ export interface AntigravitySnapshot {
   warnings: string[];
 }
 
+function isLoadingOnlySummary(summary: string | null | undefined): boolean {
+  return (
+    typeof summary === 'string' &&
+    /latest visible ui state:\s*loading\b/i.test(summary)
+  );
+}
+
+function hasMeaningfulInspectorData(
+  inspector: AntigravityThreadInspector | null | undefined,
+): boolean {
+  if (!inspector) {
+    return false;
+  }
+
+  return (
+    inspector.previewMessages.length > 0 ||
+    inspector.evidence.length > 0 ||
+    (typeof inspector.summary === 'string' &&
+      inspector.summary.trim().length > 0 &&
+      !isLoadingOnlySummary(inspector.summary))
+  );
+}
+
+export function mergeAntigravityInspector(
+  current: AntigravityThreadInspector | null | undefined,
+  incoming: AntigravityThreadInspector | null | undefined,
+): AntigravityThreadInspector | null {
+  if (!current && !incoming) {
+    return null;
+  }
+  if (!current) {
+    return incoming ?? null;
+  }
+  if (!incoming) {
+    return current;
+  }
+
+  const previewMessages =
+    current.previewMessages.length >= incoming.previewMessages.length
+      ? current.previewMessages
+      : incoming.previewMessages;
+  const summary =
+    typeof incoming.summary === 'string' &&
+    incoming.summary.trim().length > 0 &&
+    (!isLoadingOnlySummary(incoming.summary) || !current.summary)
+      ? incoming.summary
+      : current.summary ?? incoming.summary ?? null;
+  const evidenceByPath = new Map<string, AgentThreadEvidenceLink>();
+
+  for (const item of [...current.evidence, ...incoming.evidence]) {
+    evidenceByPath.set(`${item.kind}:${item.path}`, item);
+  }
+
+  return {
+    summary,
+    previewMessages,
+    evidence: [...evidenceByPath.values()],
+  };
+}
+
 function filterDashboardWarnings(warnings: string[]): string[] {
   return warnings.filter(
     (warning) =>
@@ -189,6 +249,10 @@ export class AntigravityProvider {
         snapshot: AntigravitySnapshot;
       }
     | undefined;
+  private readonly inspectorCache = new Map<
+    string,
+    AntigravityThreadInspector
+  >();
 
   private async runTool<T>(
     tool: string,
@@ -522,16 +586,21 @@ export class AntigravityProvider {
     thread: AgentThread,
   ): Promise<AntigravityThreadInspector> {
     const artifact = parseArtifactPayload(thread);
-    if (artifact) {
-      return {
-        summary: artifact.summary,
-        previewMessages: artifact.previewMessages.map((message) => ({
-          ...message,
-          text: this.truncate(message.text, 4000),
-        })),
-        evidence: artifact.evidence,
-      };
-    }
+    const cachedInspector = this.inspectorCache.get(thread.id) ?? null;
+    const artifactInspector = artifact
+      ? {
+          summary: artifact.summary,
+          previewMessages: artifact.previewMessages.map((message) => ({
+            ...message,
+            text: this.truncate(message.text, 4000),
+          })),
+          evidence: artifact.evidence,
+        }
+      : null;
+    const fallbackInspector = mergeAntigravityInspector(
+      cachedInspector,
+      artifactInspector,
+    );
 
     const metadata = this.parseMetadata(thread.metadataJson);
     const conversationIdentifier =
@@ -611,21 +680,32 @@ export class AntigravityProvider {
           kind: 'file' as const,
         }));
 
-      return {
+      const liveInspector = {
         summary,
         previewMessages,
         evidence,
       };
+      const mergedInspector =
+        mergeAntigravityInspector(fallbackInspector, liveInspector) ??
+        liveInspector;
+
+      if (hasMeaningfulInspectorData(mergedInspector)) {
+        this.inspectorCache.set(thread.id, mergedInspector);
+      }
+
+      return mergedInspector;
     } catch (err) {
       logger.warn(
         { err, threadId: thread.id },
         'Failed to build Antigravity thread inspector',
       );
-      return {
-        summary: null,
-        previewMessages: [],
-        evidence: [],
-      };
+      return (
+        fallbackInspector ?? {
+          summary: null,
+          previewMessages: [],
+          evidence: [],
+        }
+      );
     }
   }
 

@@ -1243,6 +1243,51 @@
       saveJsonCache(INSPECTOR_CACHE_KEY, cached);
     }
 
+    function isLoadingOnlySummary(summary) {
+      return typeof summary === 'string' && /latest visible ui state:\s*loading\b/i.test(summary);
+    }
+
+    function countPreviewMessages(data) {
+      if (!Array.isArray(data?.previewMessages)) return 0;
+      return data.previewMessages.filter((message) => typeof message?.text === 'string' && message.text.trim()).length;
+    }
+
+    function mergeInspectorData(current, incoming) {
+      if (!current && !incoming) return null;
+      if (!current) return incoming;
+      if (!incoming) return current;
+
+      const currentPreviewCount = countPreviewMessages(current);
+      const incomingPreviewCount = countPreviewMessages(incoming);
+      const previewMessages =
+        incomingPreviewCount >= currentPreviewCount && incomingPreviewCount > 0
+          ? incoming.previewMessages
+          : (current.previewMessages || incoming.previewMessages || []);
+
+      const summary =
+        typeof incoming.summary === 'string' &&
+        incoming.summary.trim() &&
+        (!isLoadingOnlySummary(incoming.summary) || !current.summary)
+          ? incoming.summary
+          : (current.summary ?? incoming.summary ?? null);
+
+      const evidenceByKey = new Map();
+      [...(current.evidence || []), ...(incoming.evidence || [])].forEach((item) => {
+        if (!item) return;
+        evidenceByKey.set(`${item.kind || 'file'}:${item.path || item.label || ''}`, item);
+      });
+
+      return {
+        ...current,
+        ...incoming,
+        summary,
+        previewMessages,
+        evidence: [...evidenceByKey.values()],
+        actions: Array.isArray(incoming.actions) ? incoming.actions : (current.actions || []),
+        thread: incoming.thread || current.thread || null,
+      };
+    }
+
     function setRefreshIndicator(visible, label = 'refreshing cached view') {
       if (!refreshPill) return;
       refreshPill.classList.toggle('visible', visible);
@@ -1836,16 +1881,22 @@
         const response = await fetch(`/api/threads/inspector?threadId=${encodeURIComponent(threadId)}`);
         const result = await response.json();
         if (!result.ok) return;
-        saveCachedInspector(threadId, result.data);
+        const latestCachedInspector = getCachedInspector(threadId);
+        const mergedInspector = mergeInspectorData(
+          selectedThreadId === threadId ? (selectedInspector || latestCachedInspector) : latestCachedInspector,
+          result.data,
+        );
+        if (!mergedInspector) return;
+        saveCachedInspector(threadId, mergedInspector);
         if (selectedThreadId !== threadId) return;
-        selectedInspector = result.data;
+        selectedInspector = mergedInspector;
         if (isQuietBackgroundRefresh) {
           if (getActiveWorkspacePanel() === 'inspector') {
-            renderInspector(result.data);
+            renderInspector(mergedInspector);
           }
         } else {
-          renderInspector(result.data);
-          renderSelectedThreadConversation(result.data);
+          renderInspector(mergedInspector);
+          renderSelectedThreadConversation(mergedInspector);
         }
         document.querySelectorAll('.thread-item').forEach((item) => {
           item.classList.toggle('selected', item.getAttribute('data-thread-id') === threadId);
@@ -2070,7 +2121,11 @@
         statusTimer = setInterval(refreshStatus, data.refreshIntervalMs);
       }
 
-      if (selectedThreadId && !(data.threads || []).some((thread) => thread.id === selectedThreadId)) {
+      if (
+        selectedThreadId &&
+        !(data.threads || []).some((thread) => thread.id === selectedThreadId) &&
+        !getCachedInspector(selectedThreadId)
+      ) {
         clearSelectedThread();
       }
     }
