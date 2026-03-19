@@ -28,6 +28,10 @@ export interface ChannelOpts {
     | { ok: true; mapping: AntigravityGroupMapping }
     | { ok: false; error: string }
   >;
+  launchAntigravityPrompt: (
+    groupJid: string,
+    brief: string,
+  ) => Promise<ThreadMessageResult>;
   getThreadTimeline: (threadId: string) => AgentThreadTimeline;
   getThreadInspector: (threadId: string) => Promise<AgentThreadInspector>;
   sendThreadMessage: (

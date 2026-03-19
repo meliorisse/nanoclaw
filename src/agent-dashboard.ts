@@ -385,6 +385,119 @@ export class AgentDashboardService {
     return result;
   }
 
+  async launchAntigravityPrompt(
+    groupJid: string,
+    brief: string,
+  ): Promise<ThreadMessageResult> {
+    const group = this.registeredGroups()[groupJid];
+
+    if (!group) {
+      return {
+        ok: false,
+        threadId: `local:${groupJid}`,
+        message: `Unknown group: ${groupJid}`,
+      };
+    }
+
+    const trimmed = brief.trim();
+    if (!trimmed) {
+      return {
+        ok: false,
+        threadId: `local:${groupJid}`,
+        message: 'A non-empty Antigravity brief is required.',
+      };
+    }
+
+    let mapping = listAntigravityGroupMappings().find(
+      (candidate) => candidate.groupJid === groupJid,
+    );
+
+    if (!mapping && group.folder === 'webui_control') {
+      const snapshot = await this.antigravityProvider.getSnapshot(true);
+      const fallbackProject = snapshot.projects.find(
+        (candidate) => candidate.projectRef === 'nanoclaw',
+      );
+
+      if (fallbackProject) {
+        mapping = {
+          groupJid,
+          projectId: fallbackProject.projectId,
+          projectRef: fallbackProject.projectRef,
+          projectName: fallbackProject.name,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+    }
+
+    if (!mapping) {
+      return {
+        ok: false,
+        threadId: `local:${groupJid}`,
+        message:
+          'Map this NanoClaw group to an Antigravity project first, then retry the launch.',
+      };
+    }
+
+    const launch = await this.antigravityProvider.createFollowupAgent({
+      projectId: mapping.projectId,
+      brief: [
+        `This request originated from the NanoClaw group "${group.name}".`,
+        trimmed,
+      ].join(' '),
+    });
+
+    if (!launch.ok) {
+      return {
+        ok: false,
+        threadId: `local:${groupJid}`,
+        message:
+          launch.warnings?.[0] ||
+          'Antigravity launch failed before a follow-up agent could be created.',
+      };
+    }
+
+    const createdThreadId = launch.data?.conversationRef
+      ? `antigravity:${launch.data.conversationRef}`
+      : `local:${groupJid}`;
+
+    if (launch.data?.conversationRef) {
+      upsertAgentThread({
+        id: createdThreadId,
+        provider: 'antigravity',
+        externalRef: launch.data.conversationRef,
+        title: `${group.name} (Antigravity)`,
+        groupJid,
+        effort: 'high',
+        desiredEffort: null,
+        state: 'waiting',
+        lastSeenAt: new Date().toISOString(),
+        metadataJson: JSON.stringify({
+          sourceGroupJid: groupJid,
+          projectId: mapping.projectId,
+          projectRef: mapping.projectRef,
+          projectName: mapping.projectName,
+          conversationId: launch.data.conversationId ?? null,
+        }),
+      });
+
+      recordAgentThreadAction({
+        threadId: createdThreadId,
+        actionType: 'launch_antigravity_prompt',
+        targetEffort: 'high',
+        status: 'accepted',
+        note: `Created from ${group.name} using mapped project ${mapping.projectName}. Brief: ${this.truncate(trimmed, 180)}`,
+      });
+    }
+
+    return {
+      ok: true,
+      threadId: createdThreadId,
+      message:
+        launch.data?.message ||
+        `Launched a new Antigravity prompt for ${group.name} in project ${mapping.projectName}.`,
+    };
+  }
+
   private async handleEffortChange(
     thread: AgentThread,
     targetEffort: 'low' | 'high',

@@ -12,6 +12,7 @@ import { parseVisibleWindowFixture } from "../parsing/window-fixture-parser.ts";
 import { createId } from "../../utils/ids.ts";
 import type { Logger } from "../../utils/logger.ts";
 import type { Conversation, Project } from "../../types/domain.ts";
+import { runShellCommand, shellEscape } from "../../utils/shell.ts";
 import { Extraction } from "./extraction.ts";
 import { Interaction } from "./interaction.ts";
 import { Navigation } from "./navigation.ts";
@@ -286,6 +287,47 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
     brief: string;
     parentTaskId?: string | null;
   }) {
+    if (this.config.screenSource.textCommand) {
+      try {
+        const stdout = await runShellCommand(
+          `${this.config.screenSource.textCommand} --launch-brief ${shellEscape(input.brief)} --project-title ${shellEscape(input.projectRef)}`
+        );
+        const evidence = await this.captureEvidence({ taskId: input.parentTaskId ?? null });
+        const conversationRef = `${input.projectRef}:followup:${createId("conv")}`;
+
+        return {
+          ok: true,
+          data: {
+            created: true,
+            conversationRef,
+            message:
+              stdout.trim() === "launched"
+                ? "Started a new Antigravity conversation through the live UI."
+                : "Launched a new Antigravity conversation through the live UI."
+          },
+          confidence: 0.74,
+          evidence: evidence.evidence,
+          warnings: evidence.warnings
+        };
+      } catch (error) {
+        const evidence = await this.captureEvidence({ taskId: input.parentTaskId ?? null });
+        return {
+          ok: false,
+          data: {
+            created: false,
+            conversationRef: null,
+            message: error instanceof Error ? error.message : String(error)
+          },
+          confidence: 0.22,
+          evidence: evidence.evidence,
+          warnings: [
+            ...evidence.warnings,
+            "Antigravity follow-up launch failed before the UI could confirm a new conversation."
+          ]
+        };
+      }
+    }
+
     const evidence = await this.captureEvidence({ taskId: input.parentTaskId ?? null });
     const conversationRef = `${input.projectRef}:followup:${createId("conv")}`;
 

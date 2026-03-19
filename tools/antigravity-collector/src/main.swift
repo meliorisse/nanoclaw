@@ -9,6 +9,8 @@ struct CollectorConfig {
   var promptForAccessibility = false
   var promptForAutomation = false
   var sendText: String? = nil
+  var launchBrief: String? = nil
+  var projectTitle: String? = nil
   var conversationTitle: String? = nil
   var stdoutFile: String? = nil
   var stderrFile: String? = nil
@@ -53,6 +55,14 @@ private func parseArgs() -> CollectorConfig {
     case "--send-text":
       if let value = iterator.next() {
         config.sendText = value
+      }
+    case "--launch-brief":
+      if let value = iterator.next() {
+        config.launchBrief = value
+      }
+    case "--project-title":
+      if let value = iterator.next() {
+        config.projectTitle = value
       }
     case "--conversation-title":
       if let value = iterator.next() {
@@ -1173,6 +1183,176 @@ guard let app = bestRunningApp(matching: config.appMatch) else {
 
 let appElement = AXUIElementCreateApplication(app.processIdentifier)
 let appPid = app.processIdentifier
+
+if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndNewlines),
+  !launchBrief.isEmpty
+{
+  app.activate(options: [])
+  usleep(300_000)
+
+  let launchFocusedWindow = bestAXWindow(appElement: appElement)
+  let launchRootWindow = launchFocusedWindow
+  _ = raiseWindow(launchRootWindow)
+  usleep(180_000)
+  let launchWindowInfo = bestWindowInfo(for: app)
+
+  if let launchRootWindow {
+    let windowScore = scoreWindow(launchRootWindow)
+    if windowScore < 100 &&
+      activateNamedControl(
+        root: launchRootWindow,
+        windowInfo: launchWindowInfo,
+        title: "Open Agent Manager",
+        pid: appPid
+      )
+    {
+      usleep(500_000)
+    }
+  }
+
+  let refreshedLaunchRoot =
+    bestAXWindow(
+      appElement: appElement,
+      preferredConversationTitle: config.projectTitle
+    ) ?? launchRootWindow
+  let refreshedLaunchWindowInfo = bestWindowInfo(for: app) ?? launchWindowInfo
+
+  if let projectTitle = config.projectTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+    !projectTitle.isEmpty
+  {
+    _ = activateNamedControl(
+      root: refreshedLaunchRoot,
+      windowInfo: refreshedLaunchWindowInfo,
+      title: projectTitle,
+      pid: appPid
+    )
+    usleep(300_000)
+  }
+
+  guard activateNamedControl(
+    root: refreshedLaunchRoot,
+    windowInfo: refreshedLaunchWindowInfo,
+    title: "Start new conversation",
+    pid: appPid
+  ) else {
+    stderr("Could not activate Start new conversation in Antigravity.")
+    finish(13)
+  }
+
+  usleep(500_000)
+
+  let conversationRootWindow =
+    bestAXWindow(appElement: appElement) ?? refreshedLaunchRoot
+  let conversationWindowInfo = bestWindowInfo(for: app) ?? refreshedLaunchWindowInfo
+
+  if let conversationRootWindow,
+    let composer = findComposerElement(appElement: appElement, root: conversationRootWindow)
+  {
+    if sendViaAccessibility(root: conversationRootWindow, composer: composer, text: launchBrief) {
+      if visibleWindowContainsText(
+        app: app,
+        appElement: appElement,
+        config: config,
+        text: launchBrief
+      ) {
+        stdout("launched")
+        finish(0)
+      }
+      stderr("Antigravity launch attempt completed, but the brief was not visible afterward. Delivery is unverified.")
+      finish(11)
+    }
+
+    if let frame = copyFrame(composer) {
+      leftClick(at: CGPoint(x: frame.midX, y: frame.midY), pid: appPid)
+      usleep(180_000)
+      sendViaDirectTyping(launchBrief, pid: appPid)
+      if visibleWindowContainsText(
+        app: app,
+        appElement: appElement,
+        config: config,
+        text: launchBrief
+      ) {
+        stdout("launched")
+        finish(0)
+      }
+      sendViaPasteboard(launchBrief, pid: appPid)
+      if visibleWindowContainsText(
+        app: app,
+        appElement: appElement,
+        config: config,
+        text: launchBrief
+      ) {
+        stdout("launched")
+        finish(0)
+      }
+      if sendViaSystemEvents(launchBrief) && visibleWindowContainsText(
+        app: app,
+        appElement: appElement,
+        config: config,
+        text: launchBrief
+      ) {
+        stdout("launched")
+        finish(0)
+      }
+      stderr("Antigravity launch attempt completed, but the brief was not visible afterward. Delivery is unverified.")
+      finish(11)
+    }
+  }
+
+  if let conversationWindowInfo, let launchBounds = windowBounds(from: conversationWindowInfo) {
+    if
+      #available(macOS 14.0, *),
+      let windowNumber = conversationWindowInfo[kCGWindowNumber as String] as? NSNumber,
+      let image = captureWindowImage(windowId: CGWindowID(windowNumber.uint32Value)),
+      let composerHit = findComposerOCRHit(in: image)
+    {
+      leftClick(at: screenPoint(for: composerHit, in: launchBounds), pid: appPid)
+    } else {
+      leftClick(
+        at: CGPoint(
+          x: launchBounds.midX,
+          y: launchBounds.maxY - 56
+        ),
+        pid: appPid
+      )
+    }
+    usleep(180_000)
+    sendViaDirectTyping(launchBrief, pid: appPid)
+    if visibleWindowContainsText(
+      app: app,
+      appElement: appElement,
+      config: config,
+      text: launchBrief
+    ) {
+      stdout("launched")
+      finish(0)
+    }
+    sendViaPasteboard(launchBrief, pid: appPid)
+    if visibleWindowContainsText(
+      app: app,
+      appElement: appElement,
+      config: config,
+      text: launchBrief
+    ) {
+      stdout("launched")
+      finish(0)
+    }
+    if sendViaSystemEvents(launchBrief) && visibleWindowContainsText(
+      app: app,
+      appElement: appElement,
+      config: config,
+      text: launchBrief
+    ) {
+      stdout("launched")
+      finish(0)
+    }
+    stderr("Antigravity fallback launch attempt completed, but the brief was not visible afterward. Delivery is unverified.")
+    finish(11)
+  }
+
+  stderr("Could not find the Antigravity composer after starting a new conversation.")
+  finish(9)
+}
 
 if let sendText = config.sendText {
   app.activate(options: [])

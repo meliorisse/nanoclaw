@@ -361,6 +361,37 @@ class WebuiChannel implements Channel {
       return;
     }
 
+    if (req.method === 'POST' && urlPath === '/api/antigravity/launch') {
+      const body = await this.readRequestBody(req);
+      const data = JSON.parse(body || '{}') as {
+        groupJid?: string;
+        brief?: string;
+      };
+
+      if (!data.groupJid || typeof data.brief !== 'string' || !data.brief.trim()) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: 'groupJid and non-empty brief are required.',
+          }),
+        );
+        return;
+      }
+
+      const result = await this.opts.launchAntigravityPrompt(
+        data.groupJid,
+        data.brief,
+      );
+
+      res.writeHead(result.ok ? 200 : 409, {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+      });
+      res.end(JSON.stringify(result));
+      return;
+    }
+
     if (req.method !== 'GET') {
       res.writeHead(405);
       res.end();

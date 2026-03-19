@@ -705,6 +705,8 @@ async function main(): Promise<void> {
       dashboardService.requestEffortChange(threadId, targetEffort),
     setAntigravityMapping: (groupJid: string, projectId: string) =>
       dashboardService.setAntigravityMapping(groupJid, projectId),
+    launchAntigravityPrompt: (groupJid: string, brief: string) =>
+      dashboardService.launchAntigravityPrompt(groupJid, brief),
     getThreadTimeline: (threadId: string) =>
       dashboardService.getThreadTimeline(threadId),
     getThreadInspector: (threadId: string) =>

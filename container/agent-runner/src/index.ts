@@ -91,6 +91,17 @@ const WEBUI_CONTROL_ALLOWED_TOOLS = [
   'mcp__nanoclaw__*',
 ];
 
+const WEBUI_CONTROL_SYSTEM_NOTE = `
+When the user asks you to inspect, launch, or message Antigravity work, use the NanoClaw MCP tools instead of merely describing what you plan to do.
+
+- Use mcp__nanoclaw__get_agent_dashboard to inspect live local and Antigravity threads.
+- Use mcp__nanoclaw__get_thread_history to read an Antigravity thread transcript.
+- Use mcp__nanoclaw__launch_antigravity_prompt to start a new mapped Antigravity prompt for this group.
+- Use mcp__nanoclaw__send_antigravity_message to send to an existing Antigravity thread.
+
+Do not claim you launched or tested Antigravity unless a tool call succeeded.
+`.trim();
+
 const SCHEDULED_TASK_ALLOWED_TOOLS = [
   'Bash',
 ];
@@ -444,9 +455,7 @@ async function runQuery(
     : INTERACTIVE_ALLOWED_TOOLS;
   const tools = isScheduledTask
     ? SCHEDULED_TASK_ALLOWED_TOOLS
-    : isWebUiControlInteractive
-      ? WEBUI_CONTROL_BUILTIN_TOOLS
-      : undefined;
+    : undefined;
   const mcpServers = isScheduledTask
     ? undefined
     : {
@@ -478,6 +487,13 @@ async function runQuery(
     log('Using lean WebUI Control query profile');
   }
 
+  const appendedSystemPrompt = [
+    globalClaudeMd,
+    isWebUiControlInteractive ? WEBUI_CONTROL_SYSTEM_NOTE : undefined,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -485,8 +501,8 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
+      systemPrompt: appendedSystemPrompt
+        ? { type: 'preset' as const, preset: 'claude_code' as const, append: appendedSystemPrompt }
         : undefined,
       allowedTools,
       tools,

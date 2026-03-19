@@ -21,6 +21,8 @@ const TASKS_DIR = process.env.NANOCLAW_IPC_TASKS_DIR || '/workspace/ipc/tasks';
 const chatJid = process.env.NANOCLAW_CHAT_JID!;
 const groupFolder = process.env.NANOCLAW_GROUP_FOLDER!;
 const isMain = process.env.NANOCLAW_IS_MAIN === '1';
+const NANOCLAW_API_BASE_URL =
+  process.env.NANOCLAW_API_BASE_URL || 'http://127.0.0.1:3030';
 
 function writeIpcFile(dir: string, data: object): string {
   fs.mkdirSync(dir, { recursive: true });
@@ -34,6 +36,33 @@ function writeIpcFile(dir: string, data: object): string {
   fs.renameSync(tempPath, filepath);
 
   return filename;
+}
+
+async function callNanoclawApi(
+  endpoint: string,
+  init?: RequestInit,
+): Promise<unknown> {
+  const response = await fetch(`${NANOCLAW_API_BASE_URL}${endpoint}`, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(init?.headers || {}),
+    },
+    signal: AbortSignal.timeout(20_000),
+  });
+
+  const text = await response.text();
+  const json = text ? JSON.parse(text) : null;
+
+  if (!response.ok) {
+    throw new Error(
+      typeof json?.error === 'string'
+        ? json.error
+        : `NanoClaw API ${endpoint} failed with ${response.status}`,
+    );
+  }
+
+  return json;
 }
 
 const server = new McpServer({
@@ -61,6 +90,155 @@ server.tool(
     writeIpcFile(MESSAGES_DIR, data);
 
     return { content: [{ type: 'text' as const, text: 'Message sent.' }] };
+  },
+);
+
+server.tool(
+  'get_agent_dashboard',
+  'Inspect NanoClaw local and Antigravity thread state, provider readiness, mappings, and warnings.',
+  {},
+  async () => {
+    try {
+      const data = (await callNanoclawApi('/api/status')) as {
+        providers?: unknown;
+        threads?: unknown;
+        antigravityProjects?: unknown;
+        antigravityMappings?: unknown;
+        warnings?: unknown;
+      };
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              {
+                providers: data.providers ?? [],
+                threads: data.threads ?? [],
+                antigravityProjects: data.antigravityProjects ?? [],
+                antigravityMappings: data.antigravityMappings ?? [],
+                warnings: data.warnings ?? [],
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Failed to load NanoClaw dashboard: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'get_thread_history',
+  'Fetch the current transcript and inspector summary for a local or Antigravity thread.',
+  {
+    thread_id: z.string().describe('The thread ID from get_agent_dashboard, e.g. "antigravity:nanoclaw:debugging-agent-threads".'),
+  },
+  async (args) => {
+    try {
+      const data = await callNanoclawApi(
+        `/api/threads/inspector?threadId=${encodeURIComponent(args.thread_id)}`,
+      );
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(data, null, 2),
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Failed to load thread history: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'send_antigravity_message',
+  'Send a message to an existing Antigravity thread by NanoClaw thread ID.',
+  {
+    thread_id: z.string().describe('The Antigravity thread ID from get_agent_dashboard.'),
+    text: z.string().describe('The message to send to that Antigravity thread.'),
+  },
+  async (args) => {
+    try {
+      const data = await callNanoclawApi('/api/threads/message', {
+        method: 'POST',
+        body: JSON.stringify({
+          threadId: args.thread_id,
+          text: args.text,
+        }),
+      });
+
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Failed to send Antigravity message: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'launch_antigravity_prompt',
+  'Launch a new high-effort Antigravity prompt for the current mapped NanoClaw group.',
+  {
+    brief: z.string().describe('The prompt or brief to launch on Antigravity.'),
+    target_group_jid: z.string().optional().describe('(Main group only) target NanoClaw group JID. Defaults to the current group.'),
+  },
+  async (args) => {
+    try {
+      const groupJid = isMain && args.target_group_jid ? args.target_group_jid : chatJid;
+      const data = await callNanoclawApi('/api/antigravity/launch', {
+        method: 'POST',
+        body: JSON.stringify({
+          groupJid,
+          brief: args.brief,
+        }),
+      });
+
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Failed to launch Antigravity prompt: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
   },
 );
 
