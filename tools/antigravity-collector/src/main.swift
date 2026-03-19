@@ -38,6 +38,14 @@ private let geometryAttributes = [
   kAXSizeAttribute as String,
 ]
 
+private let approvalButtonTitles = [
+  "Allow",
+  "Always Allow",
+  "Continue",
+  "Proceed",
+  "OK",
+]
+
 private func parseArgs() -> CollectorConfig {
   var config = CollectorConfig()
   var iterator = CommandLine.arguments.dropFirst().makeIterator()
@@ -1161,6 +1169,68 @@ private func visibleWindowContainsText(
   return false
 }
 
+@discardableResult
+private func clickApprovalButtonIfPresent(
+  app: NSRunningApplication,
+  appElement: AXUIElement,
+  pid: pid_t
+) -> Bool {
+  let root = bestAXWindow(appElement: appElement)
+  let windowInfo = bestWindowInfo(for: app)
+
+  for title in approvalButtonTitles {
+    if activateNamedControl(
+      root: root,
+      windowInfo: windowInfo,
+      title: title,
+      pid: pid
+    ) {
+      usleep(250_000)
+      return true
+    }
+  }
+
+  return false
+}
+
+private func autoApprovePendingPrompts(
+  app: NSRunningApplication,
+  appElement: AXUIElement,
+  pid: pid_t,
+  attempts: Int = 20,
+  delayMicros: useconds_t = 400_000
+) {
+  var clickedAny = false
+
+  for attempt in 0..<attempts {
+    if attempt > 0 {
+      usleep(delayMicros)
+    }
+
+    let clicked = clickApprovalButtonIfPresent(
+      app: app,
+      appElement: appElement,
+      pid: pid
+    )
+    clickedAny = clickedAny || clicked
+
+    if !clicked && clickedAny {
+      break
+    }
+  }
+}
+
+private func finishSuccessfulDispatch(
+  _ status: String,
+  app: NSRunningApplication,
+  appElement: AXUIElement,
+  pid: pid_t
+) -> Never {
+  autoApprovePendingPrompts(app: app, appElement: appElement, pid: pid)
+  stdout(status)
+  finish(0)
+}
+
 guard requestAccessibility(prompt: config.promptForAccessibility) else {
   stderr("Accessibility access is required for AntigravityCollector. Enable AntigravityCollector.app in System Settings -> Privacy & Security -> Accessibility.")
   finish(1)
@@ -1255,8 +1325,12 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         config: config,
         text: launchBrief
       ) {
-        stdout("launched")
-        finish(0)
+        finishSuccessfulDispatch(
+          "launched",
+          app: app,
+          appElement: appElement,
+          pid: appPid
+        )
       }
       stderr("Antigravity launch attempt completed, but the brief was not visible afterward. Delivery is unverified.")
       finish(11)
@@ -1272,8 +1346,12 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         config: config,
         text: launchBrief
       ) {
-        stdout("launched")
-        finish(0)
+        finishSuccessfulDispatch(
+          "launched",
+          app: app,
+          appElement: appElement,
+          pid: appPid
+        )
       }
       sendViaPasteboard(launchBrief, pid: appPid)
       if visibleWindowContainsText(
@@ -1282,8 +1360,12 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         config: config,
         text: launchBrief
       ) {
-        stdout("launched")
-        finish(0)
+        finishSuccessfulDispatch(
+          "launched",
+          app: app,
+          appElement: appElement,
+          pid: appPid
+        )
       }
       if sendViaSystemEvents(launchBrief) && visibleWindowContainsText(
         app: app,
@@ -1291,8 +1373,12 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         config: config,
         text: launchBrief
       ) {
-        stdout("launched")
-        finish(0)
+        finishSuccessfulDispatch(
+          "launched",
+          app: app,
+          appElement: appElement,
+          pid: appPid
+        )
       }
       stderr("Antigravity launch attempt completed, but the brief was not visible afterward. Delivery is unverified.")
       finish(11)
@@ -1324,8 +1410,12 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
       config: config,
       text: launchBrief
     ) {
-      stdout("launched")
-      finish(0)
+      finishSuccessfulDispatch(
+        "launched",
+        app: app,
+        appElement: appElement,
+        pid: appPid
+      )
     }
     sendViaPasteboard(launchBrief, pid: appPid)
     if visibleWindowContainsText(
@@ -1334,8 +1424,12 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
       config: config,
       text: launchBrief
     ) {
-      stdout("launched")
-      finish(0)
+      finishSuccessfulDispatch(
+        "launched",
+        app: app,
+        appElement: appElement,
+        pid: appPid
+      )
     }
     if sendViaSystemEvents(launchBrief) && visibleWindowContainsText(
       app: app,
@@ -1343,8 +1437,12 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
       config: config,
       text: launchBrief
     ) {
-      stdout("launched")
-      finish(0)
+      finishSuccessfulDispatch(
+        "launched",
+        app: app,
+        appElement: appElement,
+        pid: appPid
+      )
     }
     stderr("Antigravity fallback launch attempt completed, but the brief was not visible afterward. Delivery is unverified.")
     finish(11)
@@ -1436,8 +1534,12 @@ if let sendText = config.sendText {
         config: config,
         text: sendText
       ) {
-        stdout("sent")
-        finish(0)
+        finishSuccessfulDispatch(
+          "sent",
+          app: app,
+          appElement: appElement,
+          pid: appPid
+        )
       }
       stderr("Antigravity send attempt completed, but the message was not visible afterward. Delivery is unverified.")
       finish(11)
@@ -1453,8 +1555,12 @@ if let sendText = config.sendText {
         config: config,
         text: sendText
       ) {
-        stdout("sent")
-        finish(0)
+        finishSuccessfulDispatch(
+          "sent",
+          app: app,
+          appElement: appElement,
+          pid: appPid
+        )
       }
       sendViaPasteboard(sendText, pid: appPid)
       if visibleWindowContainsText(
@@ -1463,8 +1569,12 @@ if let sendText = config.sendText {
         config: config,
         text: sendText
       ) {
-        stdout("sent")
-        finish(0)
+        finishSuccessfulDispatch(
+          "sent",
+          app: app,
+          appElement: appElement,
+          pid: appPid
+        )
       }
       if sendViaSystemEvents(sendText) && visibleWindowContainsText(
         app: app,
@@ -1472,8 +1582,12 @@ if let sendText = config.sendText {
         config: config,
         text: sendText
       ) {
-        stdout("sent")
-        finish(0)
+        finishSuccessfulDispatch(
+          "sent",
+          app: app,
+          appElement: appElement,
+          pid: appPid
+        )
       }
       stderr("Antigravity paste/send attempt completed, but the message was not visible afterward. Delivery is unverified.")
       finish(11)
@@ -1505,8 +1619,12 @@ if let sendText = config.sendText {
       config: config,
       text: sendText
     ) {
-      stdout("sent")
-      finish(0)
+      finishSuccessfulDispatch(
+        "sent",
+        app: app,
+        appElement: appElement,
+        pid: appPid
+      )
     }
     sendViaPasteboard(sendText, pid: appPid)
     if visibleWindowContainsText(
@@ -1515,8 +1633,12 @@ if let sendText = config.sendText {
       config: config,
       text: sendText
     ) {
-      stdout("sent")
-      finish(0)
+      finishSuccessfulDispatch(
+        "sent",
+        app: app,
+        appElement: appElement,
+        pid: appPid
+      )
     }
     if sendViaSystemEvents(sendText) && visibleWindowContainsText(
       app: app,
@@ -1524,8 +1646,12 @@ if let sendText = config.sendText {
       config: config,
       text: sendText
     ) {
-      stdout("sent")
-      finish(0)
+      finishSuccessfulDispatch(
+        "sent",
+        app: app,
+        appElement: appElement,
+        pid: appPid
+      )
     }
     stderr("Antigravity fallback paste/send attempt completed, but the message was not visible afterward. Delivery is unverified.")
     finish(11)
