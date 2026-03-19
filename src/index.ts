@@ -50,6 +50,7 @@ import { startIpcWatcher } from './ipc.js';
 import {
   findChannel,
   formatMessages,
+  formatHistoryWithinBudget,
   formatMessagesWithinBudget,
   formatOutbound,
 } from './router.js';
@@ -74,8 +75,10 @@ export { escapeXml, formatMessages } from './router.js';
 
 const HOST_PROMPT_BYTE_BUDGET = 64 * 1024;
 const ACTIVE_HOST_MESSAGE_BYTE_BUDGET = 32 * 1024;
+const HOST_HISTORY_CHAR_BUDGET = 18_000;
 const WEBUI_CONTROL_HOST_PROMPT_BYTE_BUDGET = 8 * 1024;
 const WEBUI_CONTROL_ACTIVE_MESSAGE_BYTE_BUDGET = 4 * 1024;
+const WEBUI_CONTROL_HISTORY_CHAR_BUDGET = 4_000;
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -195,12 +198,13 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // For hostMode groups, sessions are stateless — prepend recent conversation
   // history so the agent has context about previous exchanges.
-  // Keep this intentionally conservative for 32k local-model contexts:
-  // ~18k chars of XML-formatted history is roughly 5-7k tokens once escaped,
-  // leaving room for the SDK's system/tool scaffolding plus the active turn.
-  const HISTORY_CHAR_BUDGET = 18_000;
-
   const isWebUiControlGroup = group.folder === 'webui_control';
+  // Keep this intentionally conservative for 32k local-model contexts.
+  // WebUI Control carries extra SDK/MCP scaffolding, so it needs a much
+  // tighter history allowance than ordinary host-mode groups.
+  const historyCharBudget = isWebUiControlGroup
+    ? WEBUI_CONTROL_HISTORY_CHAR_BUDGET
+    : HOST_HISTORY_CHAR_BUDGET;
   let promptBudget = isWebUiControlGroup
     ? WEBUI_CONTROL_HOST_PROMPT_BYTE_BUDGET
     : HOST_PROMPT_BYTE_BUDGET;
@@ -230,7 +234,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const m = history[i];
       if (missedIds.has(m.id)) continue;
       charCount += (m.content?.length ?? 0) + 50; // 50 chars overhead per message
-      if (charCount > HISTORY_CHAR_BUDGET) break;
+      if (charCount > historyCharBudget) break;
       prior.unshift(m);
     }
     if (prior.length > 0) {
@@ -241,7 +245,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
         Buffer.byteLength(suffix, 'utf8') +
         Buffer.byteLength(prompt, 'utf8');
       if (promptBudget > 0) {
-        const historyPrompt = formatMessagesWithinBudget(
+        const historyPrompt = formatHistoryWithinBudget(
           prior,
           TIMEZONE,
           promptBudget,

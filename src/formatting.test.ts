@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from './config.js';
 import {
   escapeXml,
+  formatHistoryWithinBudget,
   formatMessages,
   formatMessagesWithinBudget,
   formatOutbound,
@@ -155,6 +156,63 @@ describe('formatMessages', () => {
     expect(result.formatted).toContain('[truncated]');
     expect(result.omittedCount).toBe(0);
     expect(result.truncated).toBe(true);
+  });
+});
+
+describe('formatHistoryWithinBudget', () => {
+  const TZ = 'UTC';
+  const filler = ' routine background chatter'.repeat(30);
+
+  it('keeps recent history plus a summary of omitted middle context', () => {
+    const messages = [
+      makeMsg({ id: '1', sender_name: 'Alice', content: 'Initial problem statement' }),
+      makeMsg({ id: '2', sender_name: 'Bob', content: `Routine ack one${filler}` }),
+      makeMsg({ id: '3', sender_name: 'Bob', content: `Routine ack two${filler}` }),
+      makeMsg({ id: '4', sender_name: 'Alice', content: `Routine ack three${filler}` }),
+      makeMsg({ id: '5', sender_name: 'Alice', content: 'Latest detail that must remain' }),
+      makeMsg({ id: '6', sender_name: 'Bob', content: 'Latest answer that must remain' }),
+    ];
+    const full = formatMessages(messages, TZ);
+    const budget = Buffer.byteLength(full, 'utf8') - 1200;
+
+    const result = formatHistoryWithinBudget(messages, TZ, budget);
+
+    expect(Buffer.byteLength(result.formatted, 'utf8')).toBeLessThanOrEqual(
+      budget,
+    );
+    expect(result.formatted).toContain('Latest detail that must remain');
+    expect(result.formatted).toContain('Latest answer that must remain');
+    expect(result.formatted).toContain('Earlier context');
+    expect(result.omittedCount).toBeGreaterThan(0);
+    expect(result.truncated).toBe(true);
+  });
+
+  it('retains an important middle error report instead of dropping only from the front', () => {
+    const messages = [
+      makeMsg({ id: '1', sender_name: 'Alice', content: 'Opening context' }),
+      makeMsg({ id: '2', sender_name: 'Bob', content: `light chatter one${filler}` }),
+      makeMsg({
+        id: '3',
+        sender_name: 'Alice',
+        content:
+          'Critical error report: launch failed with stack trace in /tmp/example.log',
+      }),
+      makeMsg({ id: '4', sender_name: 'Bob', content: `light chatter two${filler}` }),
+      makeMsg({ id: '5', sender_name: 'Bob', content: `light chatter three${filler}` }),
+      makeMsg({ id: '6', sender_name: 'Bob', content: `light chatter four${filler}` }),
+      makeMsg({ id: '7', sender_name: 'Bob', content: `light chatter five${filler}` }),
+      makeMsg({ id: '8', sender_name: 'Alice', content: 'Newest request' }),
+      makeMsg({ id: '9', sender_name: 'Bob', content: 'Newest acknowledgement' }),
+    ];
+    const full = formatMessages(messages, TZ);
+    const budget = Buffer.byteLength(full, 'utf8') - 2200;
+
+    const naive = formatMessagesWithinBudget(messages, TZ, budget);
+    const compacted = formatHistoryWithinBudget(messages, TZ, budget);
+
+    expect(naive.formatted).not.toContain('Critical error report');
+    expect(compacted.formatted).toContain('Critical error report');
+    expect(compacted.formatted).toContain('<history_compaction');
   });
 });
 
