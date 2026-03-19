@@ -447,6 +447,7 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
           conversationRef:
             bridgeResult.conversationRef ??
             (bridgeResult.ok ? `${input.projectRef}:followup:${createId("conv")}` : null),
+          conversationTitle: bridgeResult.conversationTitle ?? null,
           message: bridgeResult.message
         },
         confidence: bridgeResult.ok ? 0.9 : 0.2,
@@ -462,6 +463,7 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
       data: {
         created: true,
         conversationRef,
+        conversationTitle: "Follow-up Agent",
         message: "Follow-up workflow recorded locally. Replace with a real UI initiation path before production use."
       },
       confidence: 0.42,

@@ -24,6 +24,7 @@ export interface SendMessageResult {
 export interface CreateFollowupAgentResult {
   created: boolean;
   conversationRef: string | null;
+  conversationTitle?: string | null;
   message: string;
 }
 

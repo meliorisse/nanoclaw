@@ -45,7 +45,7 @@ export async function createFollowupAgentTool(
   const conversation = conversationsRepository.upsert({
     projectId: project.id,
     externalConversationRef: result.data.conversationRef,
-    title: "Follow-up Agent",
+    title: result.data.conversationTitle ?? "Follow-up Agent",
     status: "idle"
   });
 
