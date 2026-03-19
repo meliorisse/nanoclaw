@@ -199,7 +199,7 @@ function stripRecencySuffix(line: string): string {
 function normalizeSidebarLabel(line: string): string {
   return line
     .trim()
-    .replace(/^[•◦▪‣›+]+\s*/u, "")
+    .replace(/^[•◦▪‣›+>]+\s*/u, "")
     .replace(/[|‹›^]+$/u, "")
     .replace(/\bUl\b/g, "UI")
     .replace(/\s+/g, " ")
