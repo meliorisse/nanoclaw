@@ -29,6 +29,8 @@ import {
 } from './types.js';
 import { WEBUI_REFRESH_INTERVAL } from './config.js';
 
+const ANTIGRAVITY_RECENT_THREAD_RETENTION_MS = 1000 * 60 * 60 * 6;
+
 function rankState(state: AgentThread['state']): number {
   switch (state) {
     case 'running':
@@ -44,6 +46,19 @@ function rankState(state: AgentThread['state']): number {
     default:
       return 5;
   }
+}
+
+function isRecentlySeenAntigravityThread(thread: AgentThread): boolean {
+  if (thread.provider !== 'antigravity') {
+    return false;
+  }
+
+  const lastSeenAt = Date.parse(thread.lastSeenAt);
+  if (Number.isNaN(lastSeenAt)) {
+    return false;
+  }
+
+  return Date.now() - lastSeenAt <= ANTIGRAVITY_RECENT_THREAD_RETENTION_MS;
 }
 
 export function buildLocalThreads(input: {
@@ -150,7 +165,9 @@ export class AgentDashboardService {
       const staleAntigravityThreadIds = storedThreads
         .filter(
           (thread) =>
-            thread.provider === 'antigravity' && !liveThreadIds.has(thread.id),
+            thread.provider === 'antigravity' &&
+            !liveThreadIds.has(thread.id) &&
+            !isRecentlySeenAntigravityThread(thread),
         )
         .map((thread) => thread.id);
 
@@ -159,7 +176,9 @@ export class AgentDashboardService {
 
     const persistedThreads = storedThreads.filter(
       (thread) =>
-        thread.provider !== 'antigravity' && !liveThreadIds.has(thread.id),
+        !liveThreadIds.has(thread.id) &&
+        (thread.provider !== 'antigravity' ||
+          isRecentlySeenAntigravityThread(thread)),
     );
     const threads = sortThreads([
       ...localThreads,
@@ -352,25 +371,25 @@ export class AgentDashboardService {
       ) ?? null;
 
     if (!liveThread) {
-      return {
-        ok: false,
-        threadId,
-        message: `"${thread.title}" is not on the current Antigravity screen anymore. Refresh the thread list and pick a visible conversation before sending.`,
-      };
+      if (!isRecentlySeenAntigravityThread(thread)) {
+        return {
+          ok: false,
+          threadId,
+          message: `"${thread.title}" is not on the current Antigravity screen anymore. Refresh the thread list and pick a visible conversation before sending.`,
+        };
+      }
     }
 
-    upsertAgentThread({
+    const resolvedThread = {
       ...thread,
-      ...liveThread,
+      ...(liveThread ?? {}),
       desiredEffort: thread.desiredEffort,
-    });
+    };
+
+    upsertAgentThread(resolvedThread);
 
     const result = await this.antigravityProvider.sendMessage(
-      {
-        ...thread,
-        ...liveThread,
-        desiredEffort: thread.desiredEffort,
-      },
+      resolvedThread,
       trimmed,
     );
 

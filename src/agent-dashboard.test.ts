@@ -577,7 +577,7 @@ describe('agent dashboard scaffolding', () => {
       effort: 'high',
       desiredEffort: null,
       state: 'waiting',
-      lastSeenAt: '2026-03-18T00:00:00.000Z',
+      lastSeenAt: '2026-03-10T00:00:00.000Z',
       metadataJson: JSON.stringify({
         conversationId: 'conv_stale',
       }),
@@ -650,6 +650,85 @@ describe('agent dashboard scaffolding', () => {
     expect(sendMessage).not.toHaveBeenCalled();
   });
 
+  it('keeps recent antigravity threads and allows sending when the sidebar snapshot is temporarily sparse', async () => {
+    _initTestDatabase();
+
+    upsertAgentThread({
+      id: 'antigravity:tge:sunomusic-remaster-redo',
+      provider: 'antigravity',
+      externalRef: 'tge:sunomusic-remaster-redo',
+      title: 'Sunomusic Remaster Redo',
+      groupJid: null,
+      effort: 'high',
+      desiredEffort: null,
+      state: 'waiting',
+      lastSeenAt: new Date().toISOString(),
+      metadataJson: JSON.stringify({
+        conversationId: 'conv_redo',
+        projectRef: 'tge',
+        projectName: 'TGE',
+      }),
+    });
+
+    const sendMessage = vi.fn<
+      (
+        thread: { id: string; metadataJson: string | null },
+        text: string,
+      ) => Promise<{
+        ok: true;
+        threadId: string;
+        message: string;
+      }>
+    >(async (thread) => ({
+      ok: true,
+      threadId: thread.id,
+      message: 'Sent to Antigravity thread "Sunomusic Remaster Redo".',
+    }));
+
+    const service = new AgentDashboardService({
+      registeredGroups: () => ({}),
+      sessions: () => ({}),
+      queueSnapshot: () => ({}),
+      antigravityProvider: {
+        async getSnapshot() {
+          return {
+            provider: {
+              provider: 'antigravity' as const,
+              enabled: true,
+              available: true,
+              pollIntervalMs: 2000,
+              warnings: [],
+            },
+            projects: [],
+            threads: [],
+            warnings: [],
+          };
+        },
+        async sendMessage(thread: { id: string; metadataJson: string | null }, text: string) {
+          return sendMessage(thread, text);
+        },
+      } as any,
+    });
+
+    const snapshot = await service.getSnapshot();
+    expect(
+      snapshot.threads.some((thread) => thread.id === 'antigravity:tge:sunomusic-remaster-redo'),
+    ).toBe(true);
+
+    const result = await service.sendThreadMessage(
+      'antigravity:tge:sunomusic-remaster-redo',
+      'please continue checking the volume issue',
+    );
+
+    expect(result.ok).toBe(true);
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'antigravity:tge:sunomusic-remaster-redo',
+      }),
+      'please continue checking the volume issue',
+    );
+  });
+
   it('prunes stale persisted antigravity threads when a live snapshot is available', async () => {
     _initTestDatabase();
 
@@ -662,7 +741,7 @@ describe('agent dashboard scaffolding', () => {
       effort: 'high',
       desiredEffort: null,
       state: 'running',
-      lastSeenAt: '2026-03-18T00:00:00.000Z',
+      lastSeenAt: '2026-03-10T00:00:00.000Z',
       metadataJson: null,
     });
 
