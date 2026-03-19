@@ -1146,6 +1146,8 @@ private func visibleWindowContainsText(
   appElement: AXUIElement,
   config: CollectorConfig,
   text: String,
+  pid: pid_t? = nil,
+  autoApprovePrompts: Bool = false,
   attempts: Int = 4,
   delayMicros: useconds_t = 350_000
 ) -> Bool {
@@ -1157,6 +1159,14 @@ private func visibleWindowContainsText(
   for index in 0..<attempts {
     if index > 0 {
       usleep(delayMicros)
+    }
+
+    if autoApprovePrompts, let pid {
+      _ = clickApprovalButtonIfPresent(
+        app: app,
+        appElement: appElement,
+        pid: pid
+      )
     }
 
     let lines = extractVisibleLines(app: app, appElement: appElement, config: config)
@@ -1345,7 +1355,9 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         app: app,
         appElement: appElement,
         config: config,
-        text: launchProbeText
+        text: launchProbeText,
+        pid: appPid,
+        autoApprovePrompts: true
       ) {
         finishSuccessfulDispatch(
           "launched",
@@ -1366,7 +1378,9 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         app: app,
         appElement: appElement,
         config: config,
-        text: launchProbeText
+        text: launchProbeText,
+        pid: appPid,
+        autoApprovePrompts: true
       ) {
         finishSuccessfulDispatch(
           "launched",
@@ -1380,7 +1394,9 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         app: app,
         appElement: appElement,
         config: config,
-        text: launchProbeText
+        text: launchProbeText,
+        pid: appPid,
+        autoApprovePrompts: true
       ) {
         finishSuccessfulDispatch(
           "launched",
@@ -1393,7 +1409,9 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
         app: app,
         appElement: appElement,
         config: config,
-        text: launchProbeText
+        text: launchProbeText,
+        pid: appPid,
+        autoApprovePrompts: true
       ) {
         finishSuccessfulDispatch(
           "launched",
@@ -1430,7 +1448,9 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
       app: app,
       appElement: appElement,
       config: config,
-      text: launchProbeText
+      text: launchProbeText,
+      pid: appPid,
+      autoApprovePrompts: true
     ) {
       finishSuccessfulDispatch(
         "launched",
@@ -1444,7 +1464,9 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
       app: app,
       appElement: appElement,
       config: config,
-      text: launchProbeText
+      text: launchProbeText,
+      pid: appPid,
+      autoApprovePrompts: true
     ) {
       finishSuccessfulDispatch(
         "launched",
@@ -1457,7 +1479,9 @@ if let launchBrief = config.launchBrief?.trimmingCharacters(in: .whitespacesAndN
       app: app,
       appElement: appElement,
       config: config,
-      text: launchProbeText
+      text: launchProbeText,
+      pid: appPid,
+      autoApprovePrompts: true
     ) {
       finishSuccessfulDispatch(
         "launched",
@@ -1555,7 +1579,9 @@ if let sendText = config.sendText {
         app: app,
         appElement: appElement,
         config: config,
-        text: sendProbeText
+        text: sendProbeText,
+        pid: appPid,
+        autoApprovePrompts: true
       ) {
         finishSuccessfulDispatch(
           "sent",
@@ -1576,7 +1602,9 @@ if let sendText = config.sendText {
         app: app,
         appElement: appElement,
         config: config,
-        text: sendProbeText
+        text: sendProbeText,
+        pid: appPid,
+        autoApprovePrompts: true
       ) {
         finishSuccessfulDispatch(
           "sent",
@@ -1590,7 +1618,9 @@ if let sendText = config.sendText {
         app: app,
         appElement: appElement,
         config: config,
-        text: sendProbeText
+        text: sendProbeText,
+        pid: appPid,
+        autoApprovePrompts: true
       ) {
         finishSuccessfulDispatch(
           "sent",
@@ -1603,7 +1633,9 @@ if let sendText = config.sendText {
         app: app,
         appElement: appElement,
         config: config,
-        text: sendProbeText
+        text: sendProbeText,
+        pid: appPid,
+        autoApprovePrompts: true
       ) {
         finishSuccessfulDispatch(
           "sent",
@@ -1640,7 +1672,9 @@ if let sendText = config.sendText {
       app: app,
       appElement: appElement,
       config: config,
-      text: sendProbeText
+      text: sendProbeText,
+      pid: appPid,
+      autoApprovePrompts: true
     ) {
       finishSuccessfulDispatch(
         "sent",
@@ -1654,7 +1688,9 @@ if let sendText = config.sendText {
       app: app,
       appElement: appElement,
       config: config,
-      text: sendProbeText
+      text: sendProbeText,
+      pid: appPid,
+      autoApprovePrompts: true
     ) {
       finishSuccessfulDispatch(
         "sent",
@@ -1667,7 +1703,9 @@ if let sendText = config.sendText {
       app: app,
       appElement: appElement,
       config: config,
-      text: sendProbeText
+      text: sendProbeText,
+      pid: appPid,
+      autoApprovePrompts: true
     ) {
       finishSuccessfulDispatch(
         "sent",

@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import {
   ANTIGRAVITY_ENABLED,
   ANTIGRAVITY_MCP_ENTRY,
+  ANTIGRAVITY_OUTPUT_CONTRACT_ENABLED,
   ANTIGRAVITY_OVERSEER_DIR,
   ANTIGRAVITY_POLL_INTERVAL,
   ANTIGRAVITY_SCREEN_TEXT_COMMAND,
@@ -385,15 +386,20 @@ export class AntigravityProvider {
     }
 
     try {
-      const contract = createLaunchOutputContract({
-        projectRef: input.projectId,
-        groupJid: 'launch',
-      });
+      const contract = ANTIGRAVITY_OUTPUT_CONTRACT_ENABLED
+        ? createLaunchOutputContract({
+            projectRef: input.projectId,
+            groupJid: 'launch',
+          })
+        : null;
+      const brief = contract
+        ? `${input.brief}\n\n${buildLaunchContractInstruction(contract)}`
+        : input.brief;
       return await this.runTool<AntigravityCreateFollowupResponse>(
         'create_followup_agent',
         {
           projectId: input.projectId,
-          brief: `${input.brief}\n\n${buildLaunchContractInstruction(contract)}`,
+          brief,
         },
         ANTIGRAVITY_ACTION_TIMEOUT_MS,
       ).then((result) => ({
@@ -401,9 +407,9 @@ export class AntigravityProvider {
         data: result.data
           ? {
               ...result.data,
-              artifactContractId: contract.contractId,
-              artifactJsonPath: contract.jsonPath,
-              artifactMarkdownPath: contract.markdownPath,
+              artifactContractId: contract?.contractId ?? null,
+              artifactJsonPath: contract?.jsonPath ?? null,
+              artifactMarkdownPath: contract?.markdownPath ?? null,
             }
           : result.data,
       }));
@@ -629,8 +635,12 @@ export class AntigravityProvider {
     thread: AgentThread,
     text: string,
   ): Promise<ThreadMessageResult> {
-    const contract = getThreadOutputContract(thread);
-    const enrichedText = `${text}\n\n${buildMessageContractInstruction(contract)}`;
+    const contract = ANTIGRAVITY_OUTPUT_CONTRACT_ENABLED
+      ? getThreadOutputContract(thread)
+      : null;
+    const enrichedText = contract
+      ? `${text}\n\n${buildMessageContractInstruction(contract)}`
+      : text;
 
     if (ANTIGRAVITY_SCREEN_TEXT_COMMAND) {
       try {

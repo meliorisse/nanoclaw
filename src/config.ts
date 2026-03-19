@@ -72,6 +72,9 @@ export const ANTIGRAVITY_POLL_INTERVAL = Math.max(
   1000,
   parseInt(process.env.ANTIGRAVITY_POLL_INTERVAL || '2000', 10) || 2000,
 );
+export const ANTIGRAVITY_OUTPUT_CONTRACT_ENABLED =
+  (process.env.ANTIGRAVITY_OUTPUT_CONTRACT_ENABLED || 'false').toLowerCase() ===
+  'true';
 export const ANTIGRAVITY_MCP_ENTRY =
   process.env.ANTIGRAVITY_MCP_ENTRY || 'src/mcp/server.ts';
 const DEFAULT_ANTIGRAVITY_COLLECTOR = path.join(
