@@ -5,7 +5,7 @@ import type { SyncVisibleStateResult } from "./visible-sync.ts";
 
 export interface HealthReport {
   ok: boolean;
-  backendMode: "command" | "fixture" | "unconfigured";
+  backendMode: "extension-bridge" | "command" | "fixture" | "unconfigured";
   textSourceConfigured: boolean;
   screenshotSourceConfigured: boolean;
   visibleProjects: number;
@@ -20,17 +20,21 @@ export async function buildHealthReport(
   activeConversationRef: string | null
 ): Promise<HealthReport> {
   const warnings: string[] = [...sync.warnings];
-  const backendMode = config.screenSource.textCommand
-    ? "command"
-    : config.visibleTextPath
+  const backendMode = config.visibleTextPath
       ? "fixture"
-      : "unconfigured";
+      : config.legacyUi.enabled && config.screenSource.textCommand
+        ? "command"
+        : config.extensionBridge.enabled
+          ? "extension-bridge"
+          : "unconfigured";
 
   if (backendMode === "unconfigured") {
-    warnings.push("No screen text source is configured. Set OVERSEER_VISIBLE_TEXT_PATH or OVERSEER_SCREEN_TEXT_COMMAND.");
+    warnings.push(
+      "No active bridge or legacy screen text source is configured. Enable OVERSEER_EXTENSION_BRIDGE_ENABLED or explicitly enable OVERSEER_LEGACY_UI_ENABLED with a text source."
+    );
   }
 
-  if (config.visibleTextPath) {
+  if (backendMode !== "extension-bridge" && config.visibleTextPath) {
     try {
       await access(config.visibleTextPath, fsConstants.R_OK);
     } catch {
@@ -46,7 +50,10 @@ export async function buildHealthReport(
     ok: warnings.length === 0,
     backendMode,
     textSourceConfigured: backendMode !== "unconfigured",
-    screenshotSourceConfigured: Boolean(config.screenSource.screenshotCommand),
+    screenshotSourceConfigured:
+      backendMode === "extension-bridge"
+        ? false
+        : Boolean(config.screenSource.screenshotCommand),
     visibleProjects: sync.projects.length,
     visibleConversations: sync.conversations.length,
     activeConversationRef,

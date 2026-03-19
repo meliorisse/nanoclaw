@@ -17,7 +17,10 @@ function pipeLogs(child: ChildProcess, label: string): void {
   child.stdout?.on('data', (chunk) => {
     const text = String(chunk).trim();
     if (text) {
-      logger.debug({ bridge: label, output: text }, 'Antigravity bridge stdout');
+      logger.debug(
+        { bridge: label, output: text },
+        'Antigravity bridge stdout',
+      );
     }
   });
 
@@ -38,34 +41,30 @@ export function startAntigravityBridgeSidecar(): AntigravityBridgeSidecar {
 
   const entry = bridgeEntryPath();
   if (!fs.existsSync(entry)) {
-    logger.warn({ entry }, 'Antigravity bridge entry not found; bridge sidecar disabled');
+    logger.warn(
+      { entry },
+      'Antigravity bridge entry not found; bridge sidecar disabled',
+    );
     return {
       async stop() {},
     };
   }
 
-  const child = spawn(
-    process.execPath,
-    ['--experimental-strip-types', entry],
-    {
-      cwd: ANTIGRAVITY_OVERSEER_DIR,
-      env: {
-        ...process.env,
-        OVERSEER_EXTENSION_BRIDGE_ENABLED: 'true',
-        OVERSEER_LEGACY_UI_ENABLED: 'false',
-        NODE_NO_WARNINGS: process.env.NODE_NO_WARNINGS || '1',
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
+  const child = spawn(process.execPath, ['--experimental-strip-types', entry], {
+    cwd: ANTIGRAVITY_OVERSEER_DIR,
+    env: {
+      ...process.env,
+      OVERSEER_EXTENSION_BRIDGE_ENABLED: 'true',
+      OVERSEER_LEGACY_UI_ENABLED: 'false',
+      NODE_NO_WARNINGS: process.env.NODE_NO_WARNINGS || '1',
     },
-  );
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
   pipeLogs(child, 'vendor-overseer');
 
   child.on('exit', (code, signal) => {
-    logger.info(
-      { code, signal },
-      'Antigravity bridge sidecar exited',
-    );
+    logger.info({ code, signal }, 'Antigravity bridge sidecar exited');
   });
 
   logger.info({ entry }, 'Started Antigravity bridge sidecar');

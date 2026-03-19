@@ -9,7 +9,6 @@ import {
   ANTIGRAVITY_OUTPUT_CONTRACT_ENABLED,
   ANTIGRAVITY_OVERSEER_DIR,
   ANTIGRAVITY_POLL_INTERVAL,
-  ANTIGRAVITY_SCREEN_TEXT_COMMAND,
 } from '../config.js';
 import { logger } from '../logger.js';
 import {
@@ -212,11 +211,6 @@ export class AntigravityProvider {
           OVERSEER_LEGACY_UI_ENABLED:
             process.env.OVERSEER_LEGACY_UI_ENABLED || 'false',
           NODE_NO_WARNINGS: process.env.NODE_NO_WARNINGS || '1',
-          ...(ANTIGRAVITY_SCREEN_TEXT_COMMAND
-            ? {
-                OVERSEER_SCREEN_TEXT_COMMAND: ANTIGRAVITY_SCREEN_TEXT_COMMAND,
-              }
-            : {}),
         },
       },
     );
@@ -645,57 +639,6 @@ export class AntigravityProvider {
     const enrichedText = contract
       ? `${text}\n\n${buildMessageContractInstruction(contract)}`
       : text;
-
-    if (ANTIGRAVITY_SCREEN_TEXT_COMMAND) {
-      try {
-        await execFileAsync(
-          ANTIGRAVITY_SCREEN_TEXT_COMMAND,
-          ['--send-text', enrichedText, '--conversation-title', thread.title],
-          {
-            timeout: ANTIGRAVITY_ACTION_TIMEOUT_MS,
-            env: {
-              ...process.env,
-            },
-          },
-        );
-
-        return {
-          ok: true,
-          threadId: thread.id,
-          message: `Sent to Antigravity thread "${thread.title}".`,
-        };
-      } catch (err) {
-        logger.warn(
-          { err, threadId: thread.id },
-          'Helper-based send to Antigravity thread failed',
-        );
-
-        if (err instanceof Error) {
-          const commandError = err as Error & {
-            stderr?: string;
-            stdout?: string;
-          };
-          const detail =
-            commandError.stderr?.trim() ||
-            commandError.stdout?.trim() ||
-            commandError.message;
-
-          return {
-            ok: false,
-            threadId: thread.id,
-            message: detail
-              ? `Antigravity send failed safely: ${detail}`
-              : `Antigravity send failed safely for "${thread.title}".`,
-          };
-        }
-
-        return {
-          ok: false,
-          threadId: thread.id,
-          message: `Antigravity send failed safely for "${thread.title}".`,
-        };
-      }
-    }
 
     const metadata = this.parseMetadata(thread.metadataJson);
     const conversationId =
