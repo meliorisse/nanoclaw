@@ -7,8 +7,12 @@ import Vision
 struct CollectorConfig {
   var appMatch = "Antigravity"
   var promptForAccessibility = false
+  var promptForAutomation = false
   var sendText: String? = nil
   var conversationTitle: String? = nil
+  var stdoutFile: String? = nil
+  var stderrFile: String? = nil
+  var exitCodeFile: String? = nil
 }
 
 private let textAttributes = [
@@ -44,6 +48,8 @@ private func parseArgs() -> CollectorConfig {
       }
     case "--prompt":
       config.promptForAccessibility = true
+    case "--prompt-automation":
+      config.promptForAutomation = true
     case "--send-text":
       if let value = iterator.next() {
         config.sendText = value
@@ -51,6 +57,18 @@ private func parseArgs() -> CollectorConfig {
     case "--conversation-title":
       if let value = iterator.next() {
         config.conversationTitle = value
+      }
+    case "--stdout-file":
+      if let value = iterator.next() {
+        config.stdoutFile = value
+      }
+    case "--stderr-file":
+      if let value = iterator.next() {
+        config.stderrFile = value
+      }
+    case "--exit-code-file":
+      if let value = iterator.next() {
+        config.exitCodeFile = value
       }
     default:
       break
@@ -60,8 +78,42 @@ private func parseArgs() -> CollectorConfig {
   return config
 }
 
+private let config = parseArgs()
+
+private func writeLine(_ text: String, to path: String?) {
+  let line = text + "\n"
+
+  if let path {
+    let url = URL(fileURLWithPath: path)
+    let data = Data(line.utf8)
+    if FileManager.default.fileExists(atPath: path) {
+      if let handle = try? FileHandle(forWritingTo: url) {
+        try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
+        try? handle.close()
+      }
+    } else {
+      try? data.write(to: url)
+    }
+    return
+  }
+
+  FileHandle.standardOutput.write(Data(line.utf8))
+}
+
+private func stdout(_ text: String) {
+  writeLine(text, to: config.stdoutFile)
+}
+
 private func stderr(_ text: String) {
-  FileHandle.standardError.write(Data((text + "\n").utf8))
+  writeLine(text, to: config.stderrFile)
+}
+
+private func finish(_ code: Int32) -> Never {
+  if let exitCodeFile = config.exitCodeFile {
+    try? "\(code)".write(toFile: exitCodeFile, atomically: true, encoding: .utf8)
+  }
+  Foundation.exit(code)
 }
 
 @discardableResult
@@ -271,6 +323,20 @@ private func postKeyboardEvent(keyCode: CGKeyCode, flags: CGEventFlags = [], pid
   postEvent(up, to: pid)
 }
 
+private func postUnicodeText(_ text: String, pid: pid_t) {
+  let source = CGEventSource(stateID: .combinedSessionState)
+  for scalar in text.unicodeScalars {
+    var value = [UniChar(scalar.value)]
+    let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true)
+    down?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
+    let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+    up?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &value)
+    postEvent(down, to: pid)
+    postEvent(up, to: pid)
+    usleep(2_000)
+  }
+}
+
 private func pressElement(_ element: AXUIElement) -> Bool {
   if supportsPress(element) {
     return AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
@@ -376,6 +442,38 @@ private func findConversationTarget(
   }
 
   return best?.element
+}
+
+@discardableResult
+private func activateNamedControl(
+  root: AXUIElement?,
+  windowInfo: [String: Any]?,
+  title: String,
+  pid: pid_t
+) -> Bool {
+  if let root,
+    let target = findConversationTarget(
+      root: root,
+      title: title,
+      requirePressable: true
+    )
+  {
+    return pressElement(target)
+  }
+
+  if
+    let windowInfo,
+    let bounds = windowBounds(from: windowInfo),
+    #available(macOS 14.0, *),
+    let windowNumber = windowInfo[kCGWindowNumber as String] as? NSNumber,
+    let image = captureWindowImage(windowId: CGWindowID(windowNumber.uint32Value)),
+    let hit = findBestOCRHit(recognizeOCRHits(on: image), matching: title)
+  {
+    leftClick(at: screenPoint(for: hit, in: bounds), pid: pid)
+    return true
+  }
+
+  return false
 }
 
 private func windowContainsText(
@@ -550,38 +648,113 @@ private func sendViaPasteboard(_ text: String, pid: pid_t) {
   }
 }
 
+private func sendViaDirectTyping(_ text: String, pid: pid_t) {
+  postUnicodeText(text, pid: pid)
+  usleep(120_000)
+  postKeyboardEvent(keyCode: 36, pid: pid)
+  usleep(120_000)
+}
+
 @discardableResult
 private func sendViaSystemEvents(_ text: String) -> Bool {
-  let pasteboard = NSPasteboard.general
-  let previous = pasteboard.string(forType: .string)
-  pasteboard.clearContents()
-  pasteboard.setString(text, forType: .string)
+  let toolsDirectory = Bundle.main.bundleURL
+    .deletingLastPathComponent() // dist
+    .deletingLastPathComponent() // antigravity-collector
+    .deletingLastPathComponent() // tools
+  let bridgeScript = toolsDirectory
+    .appendingPathComponent("antigravity-system-events-bridge")
+    .appendingPathComponent("run.sh")
+    .path
 
-  defer {
-    pasteboard.clearContents()
-    if let previous {
-      pasteboard.setString(previous, forType: .string)
-    }
-  }
-
-  let scriptSource = """
-  tell application "System Events"
-    keystroke "v" using command down
-    delay 0.12
-    key code 36
-  end tell
-  """
-
-  var errorDict: NSDictionary?
-  let script = NSAppleScript(source: scriptSource)
-  let result = script?.executeAndReturnError(&errorDict)
-
-  if let errorDict {
-    stderr("System Events send failed: \(errorDict)")
+  guard FileManager.default.isExecutableFile(atPath: bridgeScript) else {
+    stderr("System Events bridge is not available at \(bridgeScript)")
     return false
   }
 
-  return result != nil
+  let process = Process()
+  process.executableURL = URL(fileURLWithPath: bridgeScript)
+  process.arguments = ["--text", text]
+  let stdoutPipe = Pipe()
+  let stderrPipe = Pipe()
+  process.standardOutput = stdoutPipe
+  process.standardError = stderrPipe
+
+  do {
+    try process.run()
+    process.waitUntilExit()
+  } catch {
+    stderr("System Events bridge launch failed: \(error.localizedDescription)")
+    return false
+  }
+
+  let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+  let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+  let stdoutText = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+  let stderrText = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+  if process.terminationStatus != 0 {
+    if !stderrText.isEmpty {
+      stderr(stderrText)
+    } else if !stdoutText.isEmpty {
+      stderr(stdoutText)
+    } else {
+      stderr("System Events bridge exited with status \(process.terminationStatus).")
+    }
+    return false
+  }
+
+  return stdoutText == "sent"
+}
+
+@discardableResult
+private func promptAutomationAccess() -> Bool {
+  let toolsDirectory = Bundle.main.bundleURL
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+  let bridgeScript = toolsDirectory
+    .appendingPathComponent("antigravity-system-events-bridge")
+    .appendingPathComponent("run.sh")
+    .path
+
+  guard FileManager.default.isExecutableFile(atPath: bridgeScript) else {
+    stderr("Automation bridge is not available at \(bridgeScript)")
+    return false
+  }
+
+  let process = Process()
+  process.executableURL = URL(fileURLWithPath: bridgeScript)
+  process.arguments = ["--prompt-automation"]
+  let stdoutPipe = Pipe()
+  let stderrPipe = Pipe()
+  process.standardOutput = stdoutPipe
+  process.standardError = stderrPipe
+
+  do {
+    try process.run()
+    process.waitUntilExit()
+  } catch {
+    stderr("Automation prompt bridge launch failed: \(error.localizedDescription)")
+    return false
+  }
+
+  let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+  let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+  let stdoutText = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+  let stderrText = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+  if process.terminationStatus != 0 {
+    if !stderrText.isEmpty {
+      stderr(stderrText)
+    } else if !stdoutText.isEmpty {
+      stderr(stdoutText)
+    } else {
+      stderr("Automation bridge exited with status \(process.terminationStatus).")
+    }
+    return false
+  }
+
+  return stdoutText == "automation-ready"
 }
 
 @discardableResult
@@ -669,6 +842,76 @@ private func walk(
         walk(element: child, visited: &visited, lines: &lines)
       }
     }
+  }
+}
+
+private func joinedElementStrings(_ element: AXUIElement) -> String {
+  normalizeForMatch(copyStringValues(element).joined(separator: " "))
+}
+
+private func scoreWindow(
+  _ window: AXUIElement,
+  preferredConversationTitle: String? = nil
+) -> Int {
+  let normalizedText = joinedElementStrings(window)
+  guard !normalizedText.isEmpty else {
+    return 0
+  }
+
+  var score = 0
+
+  if normalizedText.contains("agent manager") {
+    score += 120
+  }
+  if normalizedText.contains("start new conversation") {
+    score += 80
+  }
+  if normalizedText.contains("workspaces") {
+    score += 80
+  }
+  if normalizedText.contains("chat history") {
+    score += 50
+  }
+  if normalizedText.contains("open agent manager") {
+    score -= 120
+  }
+  if normalizedText.contains("open editor") && !normalizedText.contains("agent manager") {
+    score -= 20
+  }
+
+  if let preferredConversationTitle {
+    let normalizedTarget = normalizeForMatch(preferredConversationTitle)
+    if !normalizedTarget.isEmpty {
+      if normalizedText.contains(normalizedTarget) {
+        score += 60
+      }
+    }
+  }
+
+  return score
+}
+
+private func bestAXWindow(
+  appElement: AXUIElement,
+  preferredConversationTitle: String? = nil
+) -> AXUIElement? {
+  let focusedWindow =
+    copyAttributeValue(appElement, attribute: kAXFocusedWindowAttribute as String)
+      .map { $0 as! AXUIElement }
+  let windows =
+    (copyAttributeValue(appElement, attribute: kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
+
+  let candidates = ([focusedWindow].compactMap { $0 } + windows).reduce(into: [AXUIElement]()) {
+    partial, window in
+    let key = elementKey(window)
+    if !partial.contains(where: { elementKey($0) == key }) {
+      partial.append(window)
+    }
+  }
+
+  return candidates.max { lhs, rhs in
+    scoreWindow(lhs, preferredConversationTitle: preferredConversationTitle) <
+      scoreWindow(rhs, preferredConversationTitle: preferredConversationTitle)
   }
 }
 
@@ -842,14 +1085,13 @@ private func findComposerOCRHit(in image: CGImage) -> OCRHit? {
 private func extractVisibleLines(
   app: NSRunningApplication,
   appElement: AXUIElement,
-  config: CollectorConfig
+  config: CollectorConfig,
+  preferredConversationTitle: String? = nil
 ) -> [String] {
-  let focusedWindow =
-    copyAttributeValue(appElement, attribute: kAXFocusedWindowAttribute as String)
-      .map { $0 as! AXUIElement }
-  let windows =
-    (copyAttributeValue(appElement, attribute: kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
-  let rootWindow = focusedWindow ?? windows.first
+  let rootWindow = bestAXWindow(
+    appElement: appElement,
+    preferredConversationTitle: preferredConversationTitle
+  )
 
   var visited = Set<String>()
   var lines: [String] = []
@@ -909,16 +1151,24 @@ private func visibleWindowContainsText(
   return false
 }
 
-let config = parseArgs()
-
 guard requestAccessibility(prompt: config.promptForAccessibility) else {
   stderr("Accessibility access is required for AntigravityCollector. Enable AntigravityCollector.app in System Settings -> Privacy & Security -> Accessibility.")
-  exit(1)
+  finish(1)
+}
+
+if config.promptForAutomation {
+  if promptAutomationAccess() {
+    stdout("automation-ready")
+    finish(0)
+  }
+
+  stderr("Automation access to System Events is required for verified Antigravity sends. Enable AntigravityCollector.app in System Settings -> Privacy & Security -> Automation.")
+  finish(12)
 }
 
 guard let app = bestRunningApp(matching: config.appMatch) else {
   stderr("No running app matched '\(config.appMatch)'.")
-  exit(2)
+  finish(2)
 }
 
 let appElement = AXUIElementCreateApplication(app.processIdentifier)
@@ -929,14 +1179,28 @@ if let sendText = config.sendText {
   usleep(300_000)
 
   let sendFocusedWindow =
-    copyAttributeValue(appElement, attribute: kAXFocusedWindowAttribute as String)
-      .map { $0 as! AXUIElement }
-  let sendWindows =
-    (copyAttributeValue(appElement, attribute: kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
-  let sendRootWindow = sendFocusedWindow ?? sendWindows.first
+    bestAXWindow(
+      appElement: appElement,
+      preferredConversationTitle: config.conversationTitle
+    )
+  let sendRootWindow = sendFocusedWindow
   _ = raiseWindow(sendRootWindow)
   usleep(180_000)
   let sendWindowInfo = bestWindowInfo(for: app)
+
+  if let sendRootWindow {
+    let windowScore = scoreWindow(sendRootWindow, preferredConversationTitle: config.conversationTitle)
+    if windowScore < 100 &&
+      activateNamedControl(
+        root: sendRootWindow,
+        windowInfo: sendWindowInfo,
+        title: "Open Agent Manager",
+        pid: appPid
+      )
+    {
+      usleep(500_000)
+    }
+  }
 
   if let conversationTitle = config.conversationTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
     !conversationTitle.isEmpty
@@ -957,7 +1221,7 @@ if let sendText = config.sendText {
     {
       guard pressElement(target) else {
         stderr("Found '\(conversationTitle)' but could not activate it.")
-        exit(7)
+        finish(7)
       }
     } else if
       let sendWindowInfo,
@@ -970,15 +1234,17 @@ if let sendText = config.sendText {
       leftClick(at: screenPoint(for: hit, in: sendBounds), pid: appPid)
     } else {
       stderr("Could not find Antigravity conversation titled '\(conversationTitle)' in the current unitybox session.")
-      exit(6)
+      finish(6)
     }
 
     usleep(350_000)
   }
 
   let refreshedRootWindow =
-    copyAttributeValue(appElement, attribute: kAXFocusedWindowAttribute as String)
-      .map { $0 as! AXUIElement } ?? sendRootWindow
+    bestAXWindow(
+      appElement: appElement,
+      preferredConversationTitle: config.conversationTitle
+    ) ?? sendRootWindow
 
   if let refreshedRootWindow,
     let composer = findComposerElement(appElement: appElement, root: refreshedRootWindow)
@@ -990,16 +1256,26 @@ if let sendText = config.sendText {
         config: config,
         text: sendText
       ) {
-        print("sent")
-        exit(0)
+        stdout("sent")
+        finish(0)
       }
       stderr("Antigravity send attempt completed, but the message was not visible afterward. Delivery is unverified.")
-      exit(11)
+      finish(11)
     }
 
     if let frame = copyFrame(composer) {
       leftClick(at: CGPoint(x: frame.midX, y: frame.midY), pid: appPid)
       usleep(180_000)
+      sendViaDirectTyping(sendText, pid: appPid)
+      if visibleWindowContainsText(
+        app: app,
+        appElement: appElement,
+        config: config,
+        text: sendText
+      ) {
+        stdout("sent")
+        finish(0)
+      }
       sendViaPasteboard(sendText, pid: appPid)
       if visibleWindowContainsText(
         app: app,
@@ -1007,8 +1283,8 @@ if let sendText = config.sendText {
         config: config,
         text: sendText
       ) {
-        print("sent")
-        exit(0)
+        stdout("sent")
+        finish(0)
       }
       if sendViaSystemEvents(sendText) && visibleWindowContainsText(
         app: app,
@@ -1016,11 +1292,11 @@ if let sendText = config.sendText {
         config: config,
         text: sendText
       ) {
-        print("sent")
-        exit(0)
+        stdout("sent")
+        finish(0)
       }
       stderr("Antigravity paste/send attempt completed, but the message was not visible afterward. Delivery is unverified.")
-      exit(11)
+      finish(11)
     }
   }
 
@@ -1042,6 +1318,16 @@ if let sendText = config.sendText {
     )
     }
     usleep(180_000)
+    sendViaDirectTyping(sendText, pid: appPid)
+    if visibleWindowContainsText(
+      app: app,
+      appElement: appElement,
+      config: config,
+      text: sendText
+    ) {
+      stdout("sent")
+      finish(0)
+    }
     sendViaPasteboard(sendText, pid: appPid)
     if visibleWindowContainsText(
       app: app,
@@ -1049,8 +1335,8 @@ if let sendText = config.sendText {
       config: config,
       text: sendText
     ) {
-      print("sent")
-      exit(0)
+      stdout("sent")
+      finish(0)
     }
     if sendViaSystemEvents(sendText) && visibleWindowContainsText(
       app: app,
@@ -1058,22 +1344,23 @@ if let sendText = config.sendText {
       config: config,
       text: sendText
     ) {
-      print("sent")
-      exit(0)
+      stdout("sent")
+      finish(0)
     }
     stderr("Antigravity fallback paste/send attempt completed, but the message was not visible afterward. Delivery is unverified.")
-    exit(11)
+    finish(11)
   }
 
   stderr("Could not find or target the Antigravity message composer in the current unitybox session.")
-  exit(9)
+  finish(9)
 }
 
 let finalLines = extractVisibleLines(app: app, appElement: appElement, config: config)
 
 if finalLines.isEmpty {
   stderr("No visible text was extracted from '\(app.localizedName ?? config.appMatch)'.")
-  exit(4)
+  finish(4)
 }
 
-print(finalLines.joined(separator: "\n"))
+stdout(finalLines.joined(separator: "\n"))
+finish(0)

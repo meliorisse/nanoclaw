@@ -565,6 +565,91 @@ describe('agent dashboard scaffolding', () => {
     ).toBe('send_thread_message');
   });
 
+  it('rejects messages to antigravity threads that are no longer visible', async () => {
+    _initTestDatabase();
+
+    upsertAgentThread({
+      id: 'antigravity:nanoclaw:debugging-agent-threads',
+      provider: 'antigravity',
+      externalRef: 'nanoclaw:debugging-agent-threads',
+      title: 'Debugging Agent Threads',
+      groupJid: null,
+      effort: 'high',
+      desiredEffort: null,
+      state: 'waiting',
+      lastSeenAt: '2026-03-18T00:00:00.000Z',
+      metadataJson: JSON.stringify({
+        conversationId: 'conv_stale',
+      }),
+    });
+
+    const sendMessage = vi.fn<
+      (
+        thread: { id: string },
+        text: string,
+      ) => Promise<{
+        ok: true;
+        threadId: string;
+        message: string;
+      }>
+    >(async () => ({
+      ok: true,
+      threadId: 'antigravity:nanoclaw:debugging-agent-threads',
+      message: 'unexpected',
+    }));
+
+    const service = new AgentDashboardService({
+      registeredGroups: () => ({}),
+      sessions: () => ({}),
+      queueSnapshot: () => ({}),
+      antigravityProvider: {
+        async getSnapshot() {
+          return {
+            provider: {
+              provider: 'antigravity' as const,
+              enabled: true,
+              available: true,
+              pollIntervalMs: 2000,
+              warnings: [],
+            },
+            projects: [],
+            threads: [
+              {
+                id: 'antigravity:nanoclaw:configuring-container-m',
+                provider: 'antigravity' as const,
+                externalRef: 'nanoclaw:configuring-container-m',
+                title: 'Configuring Container M....',
+                groupJid: null,
+                effort: 'high' as const,
+                desiredEffort: null,
+                state: 'idle' as const,
+                lastSeenAt: '2026-03-18T00:00:00.000Z',
+                metadataJson: JSON.stringify({
+                  conversationId: 'conv_live',
+                }),
+              },
+            ],
+            warnings: [],
+          };
+        },
+        async sendMessage(thread: { id: string }, text: string) {
+          return sendMessage(thread, text);
+        },
+      } as any,
+    });
+
+    const result = await service.sendThreadMessage(
+      'antigravity:nanoclaw:debugging-agent-threads',
+      'if you can read this, please type BLAH and stop',
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain(
+      'is not on the current Antigravity screen anymore',
+    );
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   it('prunes stale persisted antigravity threads when a live snapshot is available', async () => {
     _initTestDatabase();
 

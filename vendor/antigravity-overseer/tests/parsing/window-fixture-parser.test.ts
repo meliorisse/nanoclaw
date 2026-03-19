@@ -130,3 +130,54 @@ test("window fixture parser ignores interleaved main-pane text from live collect
   );
   assert.equal(parsed.warnings.length, 0);
 });
+
+const transcriptNoiseFixture = `
+Agent Manager
+nanoclaw / Debugging Agent Threads
+Chat History
+if you can read this, reply "test49" and stop
+Workspaces
+Thought for <1s
+TGE v
+test49
+Pushing Code Changes 14d
+Campaign UI Bug Fixing 15d
+Fixing Guild Raid Bug 16d
+Campaign Node Refactor 16d
+See all (27)
+nanoclaw v
+Debugging Agent Threads now
+Playground O
+No chats yet
+Knowledge|
+Browser
+Settings
+Provide Feedback +
+Planning
+Claude Sonnet 4.6 (Thinking)
+`;
+
+test("window fixture parser keeps only real transcript lines for the active conversation", () => {
+  const parsed = parseVisibleWindowFixture(transcriptNoiseFixture);
+  const activeConversation = parsed.conversations.find(
+    (conversation) => conversation.conversationRef === "nanoclaw:debugging-agent-threads"
+  );
+
+  assert.ok(activeConversation);
+  assert.deepEqual(
+    activeConversation?.messages.map((message) => ({
+      role: message.role,
+      text: message.text
+    })),
+    [
+      {
+        role: "user",
+        text: `if you can read this, reply "test49" and stop`
+      },
+      {
+        role: "assistant",
+        text: "test49"
+      }
+    ]
+  );
+});

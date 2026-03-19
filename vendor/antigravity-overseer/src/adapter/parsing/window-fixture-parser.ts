@@ -200,7 +200,7 @@ function normalizeSidebarLabel(line: string): string {
   return line
     .trim()
     .replace(/^[•◦▪‣›+]+\s*/u, "")
-    .replace(/\s+[|‹›^]+$/u, "")
+    .replace(/[|‹›^]+$/u, "")
     .replace(/\bUl\b/g, "UI")
     .replace(/\s+/g, " ")
     .trim();
@@ -306,16 +306,59 @@ function looksLikeProjectHeading(
   return Boolean(activeProjectName && stripRecencySuffix(normalized).toLowerCase() === activeProjectName.toLowerCase());
 }
 
+function isTranscriptArtifactLine(line: string, nextLine?: string): boolean {
+  const normalized = normalizeSidebarLabel(line);
+
+  if (!normalized) {
+    return true;
+  }
+
+  if (
+    matchesSidebarLabel(normalized, STOP_SIDEBAR_LINES) ||
+    matchesSidebarLabel(normalized, IGNORED_SIDEBAR_LINES)
+  ) {
+    return true;
+  }
+
+  if (normalized.startsWith("See all") || isRecencyLine(normalized)) {
+    return true;
+  }
+
+  if (looksLikeProjectHeading(normalized, null, true)) {
+    return true;
+  }
+
+  const compactConversationCandidate = looksLikeCompactSidebarLabel(stripRecencySuffix(normalized));
+  if (
+    compactConversationCandidate &&
+    (
+      /^[•◦▪‣]/u.test(line.trim()) ||
+      /(?:\d+[smhdw]|now)$/i.test(normalized) ||
+      Boolean(nextLine && isRecencyLine(nextLine))
+    )
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function parseActiveConversationMessages(lines: string[]): ConversationMessage[] {
   const messages: ConversationMessage[] = [];
   const userLines: string[] = [];
   const assistantLines: string[] = [];
   let mode: "user" | "assistant" = "user";
 
-  for (const rawLine of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index]!;
     const line = rawLine.trim();
+    const nextLine = lines[index + 1]?.trim();
 
     if (!line) {
+      continue;
+    }
+
+    if (isTranscriptArtifactLine(line, nextLine)) {
       continue;
     }
 
@@ -327,6 +370,7 @@ function parseActiveConversationMessages(lines: string[]): ConversationMessage[]
       /^Exit code /i.test(line) ||
       /^Copy$/i.test(line) ||
       /^Ask anything/i.test(line) ||
+      /^Planning\b/i.test(line) ||
       /^Claude /i.test(line)
     ) {
       if (/^Thought for /i.test(line)) {

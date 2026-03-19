@@ -343,7 +343,36 @@ export class AgentDashboardService {
       };
     }
 
-    const result = await this.antigravityProvider.sendMessage(thread, trimmed);
+    const liveSnapshot = await this.antigravityProvider.getSnapshot(true);
+    const liveThread =
+      liveSnapshot.threads.find(
+        (candidate) =>
+          candidate.id === thread.id ||
+          candidate.externalRef === thread.externalRef,
+      ) ?? null;
+
+    if (!liveThread) {
+      return {
+        ok: false,
+        threadId,
+        message: `"${thread.title}" is not on the current Antigravity screen anymore. Refresh the thread list and pick a visible conversation before sending.`,
+      };
+    }
+
+    upsertAgentThread({
+      ...thread,
+      ...liveThread,
+      desiredEffort: thread.desiredEffort,
+    });
+
+    const result = await this.antigravityProvider.sendMessage(
+      {
+        ...thread,
+        ...liveThread,
+        desiredEffort: thread.desiredEffort,
+      },
+      trimmed,
+    );
 
     recordAgentThreadAction({
       threadId,

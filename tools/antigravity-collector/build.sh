@@ -32,6 +32,8 @@ cat > "$PLIST_PATH" <<'EOF'
   <string>1</string>
   <key>LSUIElement</key>
   <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>AntigravityCollector needs Automation access to System Events so NanoClaw can safely send messages inside the unitybox Antigravity session.</string>
 </dict>
 </plist>
 EOF
