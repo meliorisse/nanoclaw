@@ -207,6 +207,10 @@ export class AntigravityProvider {
         env: {
           ...process.env,
           OVERSEER_LOG_LEVEL: process.env.OVERSEER_LOG_LEVEL || 'error',
+          OVERSEER_EXTENSION_BRIDGE_ENABLED:
+            process.env.OVERSEER_EXTENSION_BRIDGE_ENABLED || 'true',
+          OVERSEER_LEGACY_UI_ENABLED:
+            process.env.OVERSEER_LEGACY_UI_ENABLED || 'false',
           NODE_NO_WARNINGS: process.env.NODE_NO_WARNINGS || '1',
           ...(ANTIGRAVITY_SCREEN_TEXT_COMMAND
             ? {

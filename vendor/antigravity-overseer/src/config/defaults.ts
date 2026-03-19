@@ -7,6 +7,22 @@ export interface AppConfig {
   profilePath: string;
   evidenceDir: string;
   logsDir: string;
+  extensionBridge: {
+    enabled: boolean;
+    host: string;
+    port: number;
+    authToken: string | null;
+    inboxDir: string;
+    commandsDir: string;
+    resultsDir: string;
+    latestSnapshotPath: string;
+    latestVisibleTextPath: string;
+    maxPayloadBytes: number;
+    staleClaimSeconds: number;
+  };
+  legacyUi: {
+    enabled: boolean;
+  };
   visibleTextPath: string | null;
   screenSource: {
     textCommand: string | null;
@@ -50,6 +66,22 @@ export const defaultConfig: AppConfig = {
   profilePath: "./runtime/profile",
   evidenceDir: "./runtime/evidence",
   logsDir: "./runtime/logs",
+  extensionBridge: {
+    enabled: true,
+    host: "127.0.0.1",
+    port: 4317,
+    authToken: null,
+    inboxDir: "./runtime/extension-ingest",
+    commandsDir: "./runtime/extension-commands/queue",
+    resultsDir: "./runtime/extension-commands/results",
+    latestSnapshotPath: "./runtime/extension-ingest/latest-agent-manager.json",
+    latestVisibleTextPath: "./runtime/extension-ingest/latest-visible-window.txt",
+    maxPayloadBytes: 1_000_000,
+    staleClaimSeconds: 15
+  },
+  legacyUi: {
+    enabled: false
+  },
   visibleTextPath: null,
   screenSource: {
     textCommand: null,

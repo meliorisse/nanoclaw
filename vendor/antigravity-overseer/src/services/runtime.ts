@@ -1,4 +1,5 @@
 import { MacOSWindowUIAdapter } from "../adapter/macos-ui/adapter.ts";
+import path from "node:path";
 import { loadConfig } from "../config/config.ts";
 import type { AppConfig } from "../config/defaults.ts";
 import { applySchema, openDatabase, type DatabaseClient } from "../db/client.ts";
@@ -37,7 +38,12 @@ export async function createRuntimeContext(): Promise<RuntimeContext> {
   await ensureRuntimeDirs([
     resolveFromRoot(config.evidenceDir),
     resolveFromRoot(config.logsDir),
-    resolveFromRoot(config.profilePath)
+    resolveFromRoot(config.profilePath),
+    resolveFromRoot(config.extensionBridge.inboxDir),
+    resolveFromRoot(config.extensionBridge.commandsDir),
+    resolveFromRoot(config.extensionBridge.resultsDir),
+    path.dirname(resolveFromRoot(config.extensionBridge.latestSnapshotPath)),
+    path.dirname(resolveFromRoot(config.extensionBridge.latestVisibleTextPath))
   ]);
 
   const db = openDatabase(resolveFromRoot(config.dbPath));

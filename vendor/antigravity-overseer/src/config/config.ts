@@ -23,6 +23,8 @@ function mergeConfig(base: AppConfig, override: Partial<AppConfig>): AppConfig {
   return {
     ...base,
     ...override,
+    extensionBridge: { ...base.extensionBridge, ...override.extensionBridge },
+    legacyUi: { ...base.legacyUi, ...override.legacyUi },
     polling: { ...base.polling, ...override.polling },
     thresholds: { ...base.thresholds, ...override.thresholds },
     writeControls: { ...base.writeControls, ...override.writeControls },
@@ -58,6 +60,49 @@ export async function loadConfig(): Promise<AppConfig> {
     profilePath: process.env.OVERSEER_PROFILE_PATH ?? merged.profilePath,
     evidenceDir: process.env.OVERSEER_EVIDENCE_DIR ?? merged.evidenceDir,
     logsDir: process.env.OVERSEER_LOGS_DIR ?? merged.logsDir,
+    extensionBridge: {
+      enabled: readBoolean(
+        process.env.OVERSEER_EXTENSION_BRIDGE_ENABLED,
+        merged.extensionBridge.enabled
+      ),
+      host: process.env.OVERSEER_EXTENSION_BRIDGE_HOST ?? merged.extensionBridge.host,
+      port: readNumber(
+        process.env.OVERSEER_EXTENSION_BRIDGE_PORT,
+        merged.extensionBridge.port
+      ),
+      authToken:
+        process.env.OVERSEER_EXTENSION_BRIDGE_AUTH_TOKEN ||
+        merged.extensionBridge.authToken,
+      inboxDir:
+        process.env.OVERSEER_EXTENSION_BRIDGE_INBOX_DIR ??
+        merged.extensionBridge.inboxDir,
+      commandsDir:
+        process.env.OVERSEER_EXTENSION_BRIDGE_COMMANDS_DIR ??
+        merged.extensionBridge.commandsDir,
+      resultsDir:
+        process.env.OVERSEER_EXTENSION_BRIDGE_RESULTS_DIR ??
+        merged.extensionBridge.resultsDir,
+      latestSnapshotPath:
+        process.env.OVERSEER_EXTENSION_BRIDGE_SNAPSHOT_PATH ??
+        merged.extensionBridge.latestSnapshotPath,
+      latestVisibleTextPath:
+        process.env.OVERSEER_EXTENSION_BRIDGE_VISIBLE_TEXT_PATH ??
+        merged.extensionBridge.latestVisibleTextPath,
+      maxPayloadBytes: readNumber(
+        process.env.OVERSEER_EXTENSION_BRIDGE_MAX_PAYLOAD_BYTES,
+        merged.extensionBridge.maxPayloadBytes
+      ),
+      staleClaimSeconds: readNumber(
+        process.env.OVERSEER_EXTENSION_BRIDGE_STALE_CLAIM_SECONDS,
+        merged.extensionBridge.staleClaimSeconds
+      )
+    },
+    legacyUi: {
+      enabled: readBoolean(
+        process.env.OVERSEER_LEGACY_UI_ENABLED,
+        merged.legacyUi.enabled
+      )
+    },
     visibleTextPath: process.env.OVERSEER_VISIBLE_TEXT_PATH || merged.visibleTextPath,
     screenSource: {
       textCommand: process.env.OVERSEER_SCREEN_TEXT_COMMAND || merged.screenSource.textCommand,

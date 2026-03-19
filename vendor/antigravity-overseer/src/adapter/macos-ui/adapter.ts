@@ -1,10 +1,16 @@
 import path from "node:path";
 import type { AppConfig } from "../../config/defaults.ts";
 import type { DatabaseClient } from "../../db/client.ts";
+import { readLatestBridgeSnapshot } from "../../bridge/store.ts";
+import {
+  enqueueBridgeCommand,
+  waitForBridgeCommandResult
+} from "../../bridge/commands.ts";
 import { persistSnapshot } from "../core/evidence.ts";
 import type { OverseerAdapter } from "../core/adapter.ts";
 import type { WindowSession } from "../core/session.ts";
 import { AdapterNotReadyError } from "../core/errors.ts";
+import { parseBridgeSnapshotPayload } from "../parsing/bridge-snapshot-parser.ts";
 import { parseConversationMessages } from "../parsing/conversation-parser.ts";
 import { parseProjectList } from "../parsing/project-parser.ts";
 import { parseStatusFromVisibleText } from "../parsing/status-parser.ts";
@@ -12,20 +18,21 @@ import { parseVisibleWindowFixture } from "../parsing/window-fixture-parser.ts";
 import { createId } from "../../utils/ids.ts";
 import type { Logger } from "../../utils/logger.ts";
 import type { Conversation, Project } from "../../types/domain.ts";
-import { runShellCommand, shellEscape } from "../../utils/shell.ts";
-import { Extraction } from "./extraction.ts";
 import { Interaction } from "./interaction.ts";
+import { Extraction } from "../legacy-macos-ui/extraction.ts";
 import { Navigation } from "./navigation.ts";
-import { Screenshots } from "./screenshots.ts";
+import { Screenshots } from "../legacy-macos-ui/screenshots.ts";
 import { detectUiState } from "./state-detector.ts";
 import { WindowController } from "./window-controller.ts";
 
 interface ParsedScreenContext {
   visibleText: string;
   fixture: ReturnType<typeof parseVisibleWindowFixture>;
+  source: "extension-bridge" | "fixture" | "legacy-ui";
 }
 
 export class MacOSWindowUIAdapter implements OverseerAdapter {
+  private static readonly bridgeActionTimeoutMs = 90_000;
   private readonly controller: WindowController;
   private readonly extraction: Extraction;
   private readonly navigation: Navigation;
@@ -53,19 +60,84 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
 
   async attach(): Promise<WindowSession> {
     this.session = await this.controller.attach();
-    await this.navigation.ensureAgentManagerVisible(this.session);
+    if (!this.config.extensionBridge.enabled) {
+      await this.navigation.ensureAgentManagerVisible(this.session);
+    }
     this.logger.debug("Adapter session attached", { windowTitle: this.session.windowTitle });
     return this.session;
   }
 
   private async readParsedScreen(): Promise<ParsedScreenContext> {
+    if (this.config.visibleTextPath) {
+      const visibleText = await this.extraction.getVisibleText();
+      const fixture = parseVisibleWindowFixture(visibleText);
+      return {
+        visibleText,
+        fixture,
+        source: "fixture"
+      };
+    }
+
+    const bridgeSnapshot = await readLatestBridgeSnapshot(this.config);
+    if (bridgeSnapshot) {
+      const visibleText = bridgeSnapshot.payload.visibleText ?? "";
+      const fixture = parseBridgeSnapshotPayload(bridgeSnapshot.payload);
+      return {
+        visibleText,
+        fixture,
+        source: "extension-bridge"
+      };
+    }
+
     const visibleText = await this.extraction.getVisibleText();
     const fixture = parseVisibleWindowFixture(visibleText);
-    return { visibleText, fixture };
+    return { visibleText, fixture, source: "legacy-ui" };
+  }
+
+  private async dispatchBridgeCommand(input:
+    | {
+        kind: "send_message";
+        workspaceRef: string | null;
+        workspaceTitle: string | null;
+        conversationRef: string;
+        conversationTitle: string;
+        text: string;
+        probeText: string;
+      }
+    | {
+        kind: "create_followup_agent";
+        projectRef: string;
+        projectTitle: string;
+        brief: string;
+        probeText: string;
+      }
+  ) {
+    const command = await enqueueBridgeCommand(this.config, input);
+    const result = await waitForBridgeCommandResult(
+      this.config,
+      command.id,
+      MacOSWindowUIAdapter.bridgeActionTimeoutMs
+    );
+
+    if (!result) {
+      return {
+        ok: false,
+        message: `Timed out waiting for extension bridge command ${command.id}.`
+      };
+    }
+
+    return {
+      ok: result.ok,
+      message: result.message,
+      conversationRef: result.conversationRef,
+      conversationTitle: result.conversationTitle,
+      workspaceRef: result.workspaceRef,
+      workspaceTitle: result.workspaceTitle
+    };
   }
 
   async listProjects() {
-    const { visibleText, fixture } = await this.readParsedScreen();
+    const { visibleText, fixture, source } = await this.readParsedScreen();
     const parsedProjects =
       fixture.projects.length > 0
         ? fixture.projects.map((project) => ({
@@ -87,14 +159,19 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
     return {
       ok: true,
       data: projects,
-      confidence: evidence.snapshot.confidence,
+      confidence:
+        source === "extension-bridge"
+          ? Math.max(0.95, evidence.snapshot.confidence)
+          : source === "fixture"
+            ? Math.max(0.85, evidence.snapshot.confidence)
+          : evidence.snapshot.confidence,
       evidence: evidence.evidence,
       warnings: [...fixture.warnings, ...evidence.warnings]
     };
   }
 
   async listConversations(projectRef: string) {
-    const { visibleText, fixture } = await this.readParsedScreen();
+    const { visibleText, fixture, source } = await this.readParsedScreen();
     const evidence = await this.captureEvidence({});
     const fallbackStatus = parseStatusFromVisibleText(visibleText);
     const fixtureConversations = fixture.conversations.filter(
@@ -128,7 +205,16 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
     return {
       ok: true,
       data: conversations,
-      confidence: fixtureConversations.length > 0 ? Math.min(0.85, evidence.snapshot.confidence) : Math.min(0.65, fallbackStatus.confidence),
+      confidence:
+        source === "extension-bridge"
+          ? 0.95
+          : source === "fixture"
+            ? fixtureConversations.length > 0
+              ? 0.88
+              : Math.min(0.7, fallbackStatus.confidence)
+          : fixtureConversations.length > 0
+            ? Math.min(0.85, evidence.snapshot.confidence)
+            : Math.min(0.65, fallbackStatus.confidence),
       evidence: evidence.evidence,
       warnings: [
         ...fixture.warnings,
@@ -141,7 +227,7 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
   }
 
   async getConversation(conversationRef: string) {
-    const { visibleText, fixture } = await this.readParsedScreen();
+    const { visibleText, fixture, source } = await this.readParsedScreen();
     const visibleConversation = fixture.conversations.find(
       (conversation) => conversation.conversationRef === conversationRef
     );
@@ -158,16 +244,26 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
         title: visibleConversation?.conversationTitle ?? path.basename(conversationRef),
         status: status.status,
         messages,
-        confidence: status.confidence
+        confidence:
+          source === "extension-bridge"
+            ? 0.97
+            : source === "fixture"
+              ? Math.max(0.9, status.confidence)
+              : status.confidence
       },
-      confidence: status.confidence,
+      confidence:
+        source === "extension-bridge"
+          ? 0.97
+          : source === "fixture"
+            ? Math.max(0.9, status.confidence)
+            : status.confidence,
       evidence: evidence.evidence,
       warnings: [...fixture.warnings, ...evidence.warnings]
     };
   }
 
   async getStatus(conversationRef: string) {
-    const { visibleText, fixture } = await this.readParsedScreen();
+    const { visibleText, fixture, source } = await this.readParsedScreen();
     const visibleConversation = fixture.conversations.find(
       (conversation) => conversation.conversationRef === conversationRef
     );
@@ -182,14 +278,19 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
         status: status.status,
         cues: status.cues
       },
-      confidence: status.confidence,
+      confidence:
+        source === "extension-bridge"
+          ? 0.96
+          : source === "fixture"
+            ? Math.max(0.9, status.confidence)
+            : status.confidence,
       evidence: evidence.evidence,
       warnings: [...fixture.warnings, ...evidence.warnings]
     };
   }
 
   async getScreenOverview() {
-    const { fixture } = await this.readParsedScreen();
+    const { fixture, source } = await this.readParsedScreen();
     const evidence = await this.captureEvidence({});
     const activeConversation = fixture.activeConversationRef
       ? fixture.conversations.find((conversation) => conversation.conversationRef === fixture.activeConversationRef)
@@ -213,16 +314,24 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
         activeConversationRef: fixture.activeConversationRef,
         activeConversationTitle: activeConversation?.conversationTitle ?? null
       },
-      confidence: evidence.snapshot.confidence,
+      confidence:
+        source === "extension-bridge"
+          ? Math.max(0.95, evidence.snapshot.confidence)
+          : source === "fixture"
+            ? Math.max(0.88, evidence.snapshot.confidence)
+          : evidence.snapshot.confidence,
       evidence: evidence.evidence,
       warnings: [...fixture.warnings, ...evidence.warnings]
     };
   }
 
   async captureEvidence(input: { projectId?: string | null; conversationId?: string | null; taskId?: string | null }) {
-    const visibleText = await this.extraction.getVisibleText();
+    const { visibleText, source } = await this.readParsedScreen();
     const detected = detectUiState(visibleText);
-    const screenshotPath = await this.screenshots.capture("visible-window", visibleText);
+    const screenshotPath =
+      source === "legacy-ui"
+        ? await this.screenshots.capture("visible-window", visibleText)
+        : null;
     const snapshot = persistSnapshot(this.db, {
       projectId: input.projectId ?? null,
       conversationId: input.conversationId ?? null,
@@ -239,12 +348,43 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
       warnings:
         visibleText.length === 0
           ? ["No visible text fixture configured; confidence is intentionally low."]
-          : []
+          : source === "legacy-ui"
+            ? ["Using archived legacy UI extraction path."]
+            : []
     };
   }
 
   async sendMessage(input: { conversationRef: string; text: string }) {
     const preEvidence = await this.captureEvidence({});
+    const { fixture, source } = await this.readParsedScreen();
+    const visibleConversation = fixture.conversations.find(
+      (conversation) => conversation.conversationRef === input.conversationRef
+    );
+
+    if (source === "extension-bridge") {
+      const bridgeResult = await this.dispatchBridgeCommand({
+        kind: "send_message",
+        workspaceRef: visibleConversation?.projectRef ?? input.conversationRef.split(":")[0] ?? null,
+        workspaceTitle: visibleConversation?.projectName ?? null,
+        conversationRef: input.conversationRef,
+        conversationTitle:
+          visibleConversation?.conversationTitle ?? path.basename(input.conversationRef),
+        text: input.text,
+        probeText: input.text.trim().split(/\r?\n/)[0] ?? input.text.trim()
+      });
+      const postEvidence = await this.captureEvidence({});
+
+      return {
+        ok: bridgeResult.ok,
+        data: {
+          delivered: bridgeResult.ok,
+          message: bridgeResult.message
+        },
+        confidence: bridgeResult.ok ? 0.92 : 0.2,
+        evidence: [...preEvidence.evidence, ...postEvidence.evidence],
+        warnings: [...preEvidence.warnings, ...postEvidence.warnings]
+      };
+    }
 
     try {
       await this.interaction.sendMessage(input.text);
@@ -287,48 +427,34 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
     brief: string;
     parentTaskId?: string | null;
   }) {
-    if (this.config.screenSource.textCommand) {
-      try {
-        const stdout = await runShellCommand(
-          `${this.config.screenSource.textCommand} --launch-brief ${shellEscape(input.brief)} --project-title ${shellEscape(input.projectRef)}`
-        );
-        const evidence = await this.captureEvidence({ taskId: input.parentTaskId ?? null });
-        const conversationRef = `${input.projectRef}:followup:${createId("conv")}`;
+    const evidence = await this.captureEvidence({ taskId: input.parentTaskId ?? null });
+    const { fixture, source } = await this.readParsedScreen();
+    const visibleProject = fixture.projects.find((project) => project.projectRef === input.projectRef);
 
-        return {
-          ok: true,
-          data: {
-            created: true,
-            conversationRef,
-            message:
-              stdout.trim() === "launched"
-                ? "Started a new Antigravity conversation through the live UI."
-                : "Launched a new Antigravity conversation through the live UI."
-          },
-          confidence: 0.74,
-          evidence: evidence.evidence,
-          warnings: evidence.warnings
-        };
-      } catch (error) {
-        const evidence = await this.captureEvidence({ taskId: input.parentTaskId ?? null });
-        return {
-          ok: false,
-          data: {
-            created: false,
-            conversationRef: null,
-            message: error instanceof Error ? error.message : String(error)
-          },
-          confidence: 0.22,
-          evidence: evidence.evidence,
-          warnings: [
-            ...evidence.warnings,
-            "Antigravity follow-up launch failed before the UI could confirm a new conversation."
-          ]
-        };
-      }
+    if (source === "extension-bridge") {
+      const bridgeResult = await this.dispatchBridgeCommand({
+        kind: "create_followup_agent",
+        projectRef: input.projectRef,
+        projectTitle: visibleProject?.projectName ?? input.projectRef,
+        brief: input.brief,
+        probeText: input.brief.trim().split(/\r?\n/)[0] ?? input.brief.trim()
+      });
+
+      return {
+        ok: bridgeResult.ok,
+        data: {
+          created: bridgeResult.ok,
+          conversationRef:
+            bridgeResult.conversationRef ??
+            (bridgeResult.ok ? `${input.projectRef}:followup:${createId("conv")}` : null),
+          message: bridgeResult.message
+        },
+        confidence: bridgeResult.ok ? 0.9 : 0.2,
+        evidence: evidence.evidence,
+        warnings: evidence.warnings
+      };
     }
 
-    const evidence = await this.captureEvidence({ taskId: input.parentTaskId ?? null });
     const conversationRef = `${input.projectRef}:followup:${createId("conv")}`;
 
     return {

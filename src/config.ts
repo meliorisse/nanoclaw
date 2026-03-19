@@ -77,18 +77,10 @@ export const ANTIGRAVITY_OUTPUT_CONTRACT_ENABLED =
   'true';
 export const ANTIGRAVITY_MCP_ENTRY =
   process.env.ANTIGRAVITY_MCP_ENTRY || 'src/mcp/server.ts';
-const DEFAULT_ANTIGRAVITY_COLLECTOR = path.join(
-  PROJECT_ROOT,
-  'tools',
-  'antigravity-collector',
-  'run.sh',
-);
 export const ANTIGRAVITY_SCREEN_TEXT_COMMAND =
   process.env.ANTIGRAVITY_SCREEN_TEXT_COMMAND ||
   process.env.OVERSEER_SCREEN_TEXT_COMMAND ||
-  (fs.existsSync(DEFAULT_ANTIGRAVITY_COLLECTOR)
-    ? DEFAULT_ANTIGRAVITY_COLLECTOR
-    : '');
+  '';
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

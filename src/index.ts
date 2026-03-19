@@ -60,6 +60,7 @@ import {
   startRemoteControl,
   stopRemoteControl,
 } from './remote-control.js';
+import { startAntigravityBridgeSidecar } from './antigravity-bridge-sidecar.js';
 import {
   isSenderAllowed,
   isTriggerAllowed,
@@ -585,6 +586,7 @@ async function main(): Promise<void> {
   logger.info('Database initialized');
   loadState();
   restoreRemoteControl();
+  const antigravityBridge = startAntigravityBridgeSidecar();
 
   // Start credential proxy (containers route API calls through this)
   const proxyServer = await startCredentialProxy(
@@ -596,6 +598,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     proxyServer.close();
+    await antigravityBridge.stop();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
