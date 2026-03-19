@@ -70,10 +70,10 @@ describe('antigravity output contract', () => {
 
     const instruction = buildLaunchContractInstruction(contract);
 
-    expect(instruction).toContain(contract.jsonPath);
-    expect(instruction).toContain(contract.markdownPath);
+    expect(instruction).toContain('runtime/antigravity-contracts/');
     expect(instruction).toContain('"messages"');
     expect(instruction).toContain('must overwrite');
+    expect(instruction).toContain('project-relative');
   });
 
   it('builds message instructions that keep the disk contract mandatory', () => {
@@ -84,9 +84,9 @@ describe('antigravity output contract', () => {
 
     const instruction = buildMessageContractInstruction(contract);
 
-    expect(instruction).toContain(contract.jsonPath);
-    expect(instruction).toContain(contract.markdownPath);
+    expect(instruction).toContain('runtime/antigravity-contracts/');
     expect(instruction).toContain('"messages"');
     expect(instruction).toContain('required');
+    expect(instruction).toContain('project-relative');
   });
 });

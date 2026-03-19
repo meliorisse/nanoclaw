@@ -53,6 +53,18 @@ function ensureContractDir(dir: string): void {
   fs.mkdirSync(dir, { recursive: true });
 }
 
+function displayContractPath(filePath: string): string {
+  const relativePath = path.relative(process.cwd(), filePath);
+  if (
+    relativePath &&
+    !relativePath.startsWith('..') &&
+    !path.isAbsolute(relativePath)
+  ) {
+    return relativePath;
+  }
+  return filePath;
+}
+
 export function createLaunchOutputContract(input: {
   projectRef: string;
   groupJid: string;
@@ -114,14 +126,17 @@ export function getThreadOutputContract(
 export function buildLaunchContractInstruction(
   contract: AntigravityOutputContract,
 ): string {
+  const jsonDisplayPath = displayContractPath(contract.jsonPath);
+  const markdownDisplayPath = displayContractPath(contract.markdownPath);
   return [
     'NanoClaw output contract (required): before you finish your turn, you must overwrite both of these files with the canonical result of this Antigravity task.',
-    `JSON state file: ${contract.jsonPath}`,
-    `Markdown response file: ${contract.markdownPath}`,
+    `JSON state file: ${jsonDisplayPath}`,
+    `Markdown response file: ${markdownDisplayPath}`,
     `JSON schema: {"version":${CONTRACT_VERSION},"updatedAt":"ISO-8601","status":"working|blocked|complete","summary":"short summary","messages":[{"role":"user|assistant","text":"exact text","createdAt":"ISO-8601 or null"}]}`,
     'Rewrite the full JSON messages array every turn so NanoClaw can reconstruct the conversation in perfect form without OCR loss.',
     'Preserve exact text, code fences, indentation, and paragraph structure in both files.',
     'Do not omit prior user or assistant messages that are still relevant to the active thread.',
+    'Use the project-relative paths above when writing if your current workspace is already the NanoClaw project root.',
     'Do not mention this output contract or these file paths in your user-visible reply unless explicitly asked.',
   ].join(' ');
 }
@@ -129,12 +144,14 @@ export function buildLaunchContractInstruction(
 export function buildMessageContractInstruction(
   contract: AntigravityOutputContract,
 ): string {
+  const jsonDisplayPath = displayContractPath(contract.jsonPath);
+  const markdownDisplayPath = displayContractPath(contract.markdownPath);
   return [
     'NanoClaw output contract (required): after replying in this thread, you must overwrite the canonical thread files.',
-    `JSON: ${contract.jsonPath}`,
-    `Markdown: ${contract.markdownPath}`,
+    `JSON: ${jsonDisplayPath}`,
+    `Markdown: ${markdownDisplayPath}`,
     `JSON schema: {"version":${CONTRACT_VERSION},"updatedAt":"ISO-8601","status":"working|blocked|complete","summary":"short summary","messages":[{"role":"user|assistant","text":"exact text","createdAt":"ISO-8601 or null"}]}`,
-    'Rewrite the full JSON messages array every turn, preserve exact formatting in markdown, and do not mention the contract in your visible reply.',
+    'Rewrite the full JSON messages array every turn, preserve exact formatting in markdown, use project-relative paths when possible, and do not mention the contract in your visible reply.',
   ].join(' ');
 }
 
