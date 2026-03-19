@@ -97,7 +97,10 @@ When the user asks you to inspect, launch, or message Antigravity work, use the 
 - Use mcp__nanoclaw__get_agent_dashboard to inspect live local and Antigravity threads.
 - Use mcp__nanoclaw__get_thread_history to read an Antigravity thread transcript.
 - Use mcp__nanoclaw__launch_antigravity_prompt to start a new mapped Antigravity prompt for this group.
-- Use mcp__nanoclaw__send_antigravity_message to send to an existing Antigravity thread.
+- Use mcp__nanoclaw__send_antigravity_message only when the user explicitly wants to reuse or continue an existing Antigravity thread.
+- If the user asks for a new Antigravity test, a new Antigravity thread, or a fresh high-effort run, default to mcp__nanoclaw__launch_antigravity_prompt.
+- Do not substitute an existing idle thread when the user asked for a new thread unless they explicitly approve that fallback.
+- Do not probe NanoClaw or Antigravity localhost HTTP APIs with Bash or WebFetch when an MCP tool already exists for that action.
 
 Do not claim you launched or tested Antigravity unless a tool call succeeded.
 `.trim();
@@ -250,6 +253,25 @@ function sanitizeFilename(summary: string): string {
 function generateFallbackName(): string {
   const time = new Date();
   return `conversation-${time.getHours().toString().padStart(2, '0')}${time.getMinutes().toString().padStart(2, '0')}`;
+}
+
+function shouldForceAntigravityLaunch(text: string): boolean {
+  const normalized = text.toLowerCase();
+  const mentionsAntigravity = normalized.includes('antigravity');
+  const asksForNew = /(\bnew\b|\bfresh\b|\bcreate\b|\blaunch\b)/.test(normalized);
+  const asksForThreadLikeWork = /(\bthread\b|\bprompt\b|\brun\b|\btest\b)/.test(normalized);
+  const explicitlyWantsExisting = /(\bexisting\b|\breuse\b|\bcontinue\b)/.test(normalized);
+  return mentionsAntigravity && asksForNew && asksForThreadLikeWork && !explicitlyWantsExisting;
+}
+
+function applyWebUiControlRoutingHints(text: string, enabled: boolean): string {
+  if (!enabled || !shouldForceAntigravityLaunch(text)) {
+    return text;
+  }
+
+  return `${text}
+
+[ROUTING REQUIREMENT: The user explicitly asked for a NEW Antigravity thread. Use mcp__nanoclaw__launch_antigravity_prompt for this request. Do not use mcp__nanoclaw__send_antigravity_message. Do not probe localhost APIs with Bash or WebFetch when an MCP tool exists. After the tool call, report the exact MCP tool name used and its result.]`;
 }
 
 interface ParsedMessage {
@@ -597,7 +619,7 @@ async function main(): Promise<void> {
   try { fs.unlinkSync(IPC_INPUT_CLOSE_SENTINEL); } catch { /* ignore */ }
 
   // Build initial prompt (drain any pending IPC messages too)
-  let prompt = containerInput.prompt;
+  let prompt = applyWebUiControlRoutingHints(containerInput.prompt, isWebUiControlInteractive);
   if (containerInput.isScheduledTask) {
     prompt = `[SCHEDULED TASK - The following message was sent automatically and is not coming directly from the user or group.]\n\n${prompt}`;
   }
@@ -642,7 +664,7 @@ async function main(): Promise<void> {
       }
 
       log(`Got new message (${nextMessage.length} chars), starting new query`);
-      prompt = nextMessage;
+      prompt = applyWebUiControlRoutingHints(nextMessage, isWebUiControlInteractive);
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);

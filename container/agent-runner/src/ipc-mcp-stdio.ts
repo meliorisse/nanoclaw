@@ -175,7 +175,7 @@ server.tool(
 
 server.tool(
   'send_antigravity_message',
-  'Send a message to an existing Antigravity thread by NanoClaw thread ID.',
+  'Send a message to an existing Antigravity thread by NanoClaw thread ID. Use this only when the user explicitly wants an existing thread reused or continued, not when they asked for a new Antigravity thread.',
   {
     thread_id: z.string().describe('The Antigravity thread ID from get_agent_dashboard.'),
     text: z.string().describe('The message to send to that Antigravity thread.'),
@@ -209,7 +209,7 @@ server.tool(
 
 server.tool(
   'launch_antigravity_prompt',
-  'Launch a new high-effort Antigravity prompt for the current mapped NanoClaw group.',
+  'Launch a new high-effort Antigravity prompt for the current mapped NanoClaw group. Prefer this when the user asks for a new Antigravity thread, a fresh test, or a brand-new high-effort run.',
   {
     brief: z.string().describe('The prompt or brief to launch on Antigravity.'),
     target_group_jid: z.string().optional().describe('(Main group only) target NanoClaw group JID. Defaults to the current group.'),
