@@ -1882,8 +1882,12 @@
         const result = await response.json();
         if (!result.ok) return;
         const latestCachedInspector = getCachedInspector(threadId);
+        const currentThreadInspector =
+          previousSelectedThreadId === threadId
+            ? (selectedInspector || latestCachedInspector)
+            : latestCachedInspector;
         const mergedInspector = mergeInspectorData(
-          selectedThreadId === threadId ? (selectedInspector || latestCachedInspector) : latestCachedInspector,
+          currentThreadInspector,
           result.data,
         );
         if (!mergedInspector) return;
