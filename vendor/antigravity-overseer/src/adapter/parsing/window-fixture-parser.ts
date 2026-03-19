@@ -61,6 +61,23 @@ const MAIN_PANE_NOISE_PATTERNS = [
   /^Claude\b/i
 ];
 
+const TRANSCRIPT_NOISE_PATTERNS = [
+  /^Thought for /i,
+  /^Edited /i,
+  /^Ran command$/i,
+  /^Always run/i,
+  /^Exit code /i,
+  /^Copy$/i,
+  /^(?:[СC][оo]р[уy]|copy)\b/i,
+  /^Ask anything/i,
+  /^Planni/i,
+  /claude/i,
+  /knowl/i,
+  /brows/i,
+  /sett/i,
+  /^Provide Feedback/i,
+];
+
 function slugify(value: string): string {
   return value
     .toLowerCase()
@@ -199,7 +216,7 @@ function stripRecencySuffix(line: string): string {
 function normalizeSidebarLabel(line: string): string {
   return line
     .trim()
-    .replace(/^[•◦▪‣›+>]+\s*/u, "")
+    .replace(/^[•◦▪‣›+>~^\s]+/u, "")
     .replace(/[|‹›^]+$/u, "")
     .replace(/\bUl\b/g, "UI")
     .replace(/\s+/g, " ")
@@ -324,6 +341,10 @@ function isTranscriptArtifactLine(line: string, nextLine?: string): boolean {
     return true;
   }
 
+  if (normalized.length <= 24 && /[^\x00-\x7F]/.test(normalized)) {
+    return true;
+  }
+
   if (looksLikeProjectHeading(normalized, null, true)) {
     return true;
   }
@@ -353,8 +374,14 @@ function parseActiveConversationMessages(lines: string[]): ConversationMessage[]
     const rawLine = lines[index]!;
     const line = rawLine.trim();
     const nextLine = lines[index + 1]?.trim();
+    const normalized = normalizeSidebarLabel(line);
 
     if (!line) {
+      continue;
+    }
+
+    if (/^Thought for /i.test(normalized)) {
+      mode = "assistant";
       continue;
     }
 
@@ -362,21 +389,7 @@ function parseActiveConversationMessages(lines: string[]): ConversationMessage[]
       continue;
     }
 
-    if (
-      /^Thought for /i.test(line) ||
-      /^Edited /i.test(line) ||
-      /^Ran command$/i.test(line) ||
-      /^Always run/i.test(line) ||
-      /^Exit code /i.test(line) ||
-      /^Copy$/i.test(line) ||
-      /^Ask anything/i.test(line) ||
-      /^Planning\b/i.test(line) ||
-      /^Claude /i.test(line)
-    ) {
-      if (/^Thought for /i.test(line)) {
-        mode = "assistant";
-      }
-
+    if (TRANSCRIPT_NOISE_PATTERNS.some((pattern) => pattern.test(normalized))) {
       continue;
     }
 
