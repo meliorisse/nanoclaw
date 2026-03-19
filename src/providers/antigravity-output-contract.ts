@@ -162,7 +162,8 @@ export function parseArtifactPayload(
   let markdownText: string | null = null;
   if (fs.existsSync(contract.markdownPath)) {
     try {
-      markdownText = fs.readFileSync(contract.markdownPath, 'utf8').trim() || null;
+      markdownText =
+        fs.readFileSync(contract.markdownPath, 'utf8').trim() || null;
       evidence.push({
         label: path.basename(contract.markdownPath),
         path: contract.markdownPath,
@@ -175,7 +176,9 @@ export function parseArtifactPayload(
 
   const previewMessages = (payload?.messages || [])
     .filter(
-      (message): message is Required<Pick<ContractPayloadMessage, 'role' | 'text'>> &
+      (
+        message,
+      ): message is Required<Pick<ContractPayloadMessage, 'role' | 'text'>> &
         ContractPayloadMessage =>
         typeof message?.role === 'string' && typeof message?.text === 'string',
     )
@@ -224,9 +227,7 @@ function parseMetadata(metadataJson: string | null): Record<string, unknown> {
   }
 }
 
-function normalizeRole(
-  value: string,
-): AgentThreadPreviewMessage['role'] {
+function normalizeRole(value: string): AgentThreadPreviewMessage['role'] {
   if (value === 'user' || value === 'assistant' || value === 'system') {
     return value;
   }

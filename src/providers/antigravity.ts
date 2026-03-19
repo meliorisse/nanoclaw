@@ -632,12 +632,7 @@ export class AntigravityProvider {
       try {
         await execFileAsync(
           ANTIGRAVITY_SCREEN_TEXT_COMMAND,
-          [
-            '--send-text',
-            enrichedText,
-            '--conversation-title',
-            thread.title,
-          ],
+          ['--send-text', enrichedText, '--conversation-title', thread.title],
           {
             timeout: 15000,
             env: {
