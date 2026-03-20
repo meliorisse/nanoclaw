@@ -111,6 +111,13 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
         brief: string;
         probeText: string;
       }
+    | {
+        kind: "focus_conversation";
+        workspaceRef: string | null;
+        workspaceTitle: string | null;
+        conversationRef: string;
+        conversationTitle: string;
+      }
   ) {
     const command = await enqueueBridgeCommand(this.config, input);
     const result = await waitForBridgeCommandResult(
@@ -134,6 +141,64 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
       workspaceRef: result.workspaceRef,
       workspaceTitle: result.workspaceTitle
     };
+  }
+
+  private async waitForConversationFocus(
+    conversationRef: string,
+    conversationTitle: string
+  ): Promise<ParsedScreenContext | null> {
+    const deadline = Date.now() + 8_000;
+
+    while (Date.now() < deadline) {
+      const screen = await this.readParsedScreen();
+      const activeConversation = screen.fixture.conversations.find(
+        (conversation) => conversation.conversationRef === screen.fixture.activeConversationRef
+      );
+
+      if (
+        screen.fixture.activeConversationRef === conversationRef ||
+        activeConversation?.conversationTitle === conversationTitle
+      ) {
+        return screen;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+
+    return null;
+  }
+
+  private async ensureConversationVisible(
+    conversationRef: string,
+    conversationTitle: string,
+    projectRef: string | null,
+    projectTitle: string | null
+  ): Promise<ParsedScreenContext | null> {
+    const screen = await this.readParsedScreen();
+    const activeConversation = screen.fixture.conversations.find(
+      (conversation) => conversation.conversationRef === screen.fixture.activeConversationRef
+    );
+
+    if (
+      screen.fixture.activeConversationRef === conversationRef ||
+      activeConversation?.conversationTitle === conversationTitle
+    ) {
+      return screen;
+    }
+
+    const focusResult = await this.dispatchBridgeCommand({
+      kind: "focus_conversation",
+      workspaceRef: projectRef,
+      workspaceTitle: projectTitle,
+      conversationRef,
+      conversationTitle
+    });
+
+    if (!focusResult.ok) {
+      return null;
+    }
+
+    return await this.waitForConversationFocus(conversationRef, conversationTitle);
   }
 
   async listProjects() {
@@ -227,10 +292,40 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
   }
 
   async getConversation(conversationRef: string) {
-    const { visibleText, fixture, source } = await this.readParsedScreen();
-    const visibleConversation = fixture.conversations.find(
+    let screen = await this.readParsedScreen();
+    let { visibleText, fixture, source } = screen;
+    let visibleConversation = fixture.conversations.find(
       (conversation) => conversation.conversationRef === conversationRef
     );
+
+    if (source === "extension-bridge") {
+      const activeConversation = fixture.conversations.find(
+        (conversation) => conversation.conversationRef === fixture.activeConversationRef
+      );
+      if (!visibleConversation || activeConversation?.conversationRef !== conversationRef) {
+        const fallbackProjectRef =
+          visibleConversation?.projectRef ?? conversationRef.split(":")[0] ?? null;
+        const fallbackProjectTitle =
+          fixture.projects.find((project) => project.projectRef === fallbackProjectRef)?.projectName ??
+          visibleConversation?.projectName ??
+          null;
+        const focusedScreen = await this.ensureConversationVisible(
+          conversationRef,
+          visibleConversation?.conversationTitle ?? path.basename(conversationRef),
+          fallbackProjectRef,
+          fallbackProjectTitle
+        );
+
+        if (focusedScreen) {
+          screen = focusedScreen;
+          ({ visibleText, fixture, source } = screen);
+          visibleConversation = fixture.conversations.find(
+            (conversation) => conversation.conversationRef === conversationRef
+          );
+        }
+      }
+    }
+
     const messages = visibleConversation?.messages ?? parseConversationMessages(visibleText);
     const status = visibleConversation
       ? { status: visibleConversation.status, confidence: 0.86, cues: ["structured_fixture"] }

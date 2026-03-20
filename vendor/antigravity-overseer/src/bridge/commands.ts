@@ -5,7 +5,7 @@ import { constants as fsConstants } from "node:fs";
 import type { AppConfig } from "../config/defaults.ts";
 import { ensureDir, resolveFromRoot } from "../utils/paths.ts";
 
-export type BridgeCommandKind = "send_message" | "create_followup_agent";
+export type BridgeCommandKind = "send_message" | "create_followup_agent" | "focus_conversation";
 export type BridgeCommandStatus = "pending" | "claimed" | "completed" | "failed";
 
 export interface SendMessageCommandPayload {
@@ -26,9 +26,18 @@ export interface CreateFollowupAgentCommandPayload {
   probeText: string;
 }
 
+export interface FocusConversationCommandPayload {
+  kind: "focus_conversation";
+  workspaceRef: string | null;
+  workspaceTitle: string | null;
+  conversationRef: string;
+  conversationTitle: string;
+}
+
 export type BridgeCommandPayload =
   | SendMessageCommandPayload
-  | CreateFollowupAgentCommandPayload;
+  | CreateFollowupAgentCommandPayload
+  | FocusConversationCommandPayload;
 
 export interface StoredBridgeCommand {
   id: string;
