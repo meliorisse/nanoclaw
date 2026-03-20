@@ -101,9 +101,41 @@ export function parseBridgeSnapshotPayload(
         };
 
   const projectsMap = new Map<string, VisibleProjectFixture>();
-  for (const project of hasStructuredWorkspaces ? metadataProjects : visibleTextFallback.projects) {
+  for (const project of metadataProjects) {
     projectsMap.set(project.projectRef, project);
   }
+
+  const resolvedActiveProjectRef =
+    (typeof payload.workspaceRef === "string" ? payload.workspaceRef : null) ??
+    (visibleTextFallback.activeConversationRef
+      ? visibleTextFallback.conversations.find(
+          (conversation) =>
+            conversation.conversationRef === visibleTextFallback.activeConversationRef
+        )?.projectRef ?? null
+      : null);
+  const resolvedActiveProjectName =
+    (typeof payload.metadata?.activeWorkspace === "string"
+      ? payload.metadata.activeWorkspace
+      : null) ??
+    (visibleTextFallback.activeConversationRef
+      ? visibleTextFallback.conversations.find(
+          (conversation) =>
+            conversation.conversationRef === visibleTextFallback.activeConversationRef
+        )?.projectName ?? null
+      : null) ??
+    resolvedActiveProjectRef;
+  const resolvedActiveConversationRef =
+    (typeof payload.conversationRef === "string" ? payload.conversationRef : null) ??
+    visibleTextFallback.activeConversationRef ??
+    null;
+  const resolvedActiveConversationTitle =
+    (typeof payload.threadTitle === "string" ? payload.threadTitle : null) ??
+    (visibleTextFallback.activeConversationRef
+      ? visibleTextFallback.conversations.find(
+          (conversation) =>
+            conversation.conversationRef === visibleTextFallback.activeConversationRef
+        )?.conversationTitle ?? null
+      : null);
 
   const conversations: VisibleConversationFixture[] = [];
   const workspaces = Array.isArray(payload.metadata?.workspaces)
@@ -166,17 +198,14 @@ export function parseBridgeSnapshotPayload(
   }
 
   if (
-    typeof payload.workspaceRef === "string" &&
-    typeof payload.threadTitle === "string" &&
+    resolvedActiveProjectRef &&
+    resolvedActiveConversationTitle &&
     !conversations.some(
-      (conversation) => conversation.conversationRef === payload.conversationRef
+      (conversation) => conversation.conversationRef === resolvedActiveConversationRef
     )
   ) {
-    const projectRef = payload.workspaceRef;
-    const projectName =
-      payload.metadata?.activeWorkspace && typeof payload.metadata.activeWorkspace === "string"
-        ? payload.metadata.activeWorkspace
-        : projectRef;
+    const projectRef = resolvedActiveProjectRef;
+    const projectName = resolvedActiveProjectName ?? projectRef;
     projectsMap.set(projectRef, {
       projectName,
       projectRef
@@ -184,9 +213,9 @@ export function parseBridgeSnapshotPayload(
     conversations.push({
       projectName,
       projectRef,
-      conversationTitle: payload.threadTitle,
+      conversationTitle: resolvedActiveConversationTitle,
       conversationRef:
-        payload.conversationRef ?? `${projectRef}:${slugify(payload.threadTitle)}`,
+        resolvedActiveConversationRef ?? `${projectRef}:${slugify(resolvedActiveConversationTitle)}`,
       status: "active",
       lastMessageAt: null,
       messages: toMessages(payload.messages)
@@ -194,13 +223,39 @@ export function parseBridgeSnapshotPayload(
   }
 
   if (conversations.length === 0) {
+    const fallbackOnlyActiveConversation =
+      resolvedActiveProjectRef && resolvedActiveConversationTitle
+      ? [
+          {
+            projectName: resolvedActiveProjectName ?? resolvedActiveProjectRef,
+            projectRef: resolvedActiveProjectRef,
+            conversationTitle: resolvedActiveConversationTitle,
+            conversationRef:
+              resolvedActiveConversationRef ??
+              `${resolvedActiveProjectRef}:${slugify(resolvedActiveConversationTitle)}`,
+            status: "active" as const,
+            lastMessageAt: null,
+            messages: toMessages(payload.messages)
+          }
+        ]
+      : [];
+    const fallbackOnlyProjects = resolvedActiveProjectRef
+      ? [
+          {
+            projectName: resolvedActiveProjectName ?? resolvedActiveProjectRef,
+            projectRef: resolvedActiveProjectRef
+          }
+        ]
+      : visibleTextFallback.projects;
+
     return {
-      projects: [...projectsMap.values(), ...visibleTextFallback.projects].filter(
+      projects: [...projectsMap.values(), ...fallbackOnlyProjects].filter(
         (project, index, items) =>
           items.findIndex((candidate) => candidate.projectRef === project.projectRef) === index
       ),
-      conversations: visibleTextFallback.conversations,
-      activeConversationRef: visibleTextFallback.activeConversationRef,
+      conversations: fallbackOnlyActiveConversation,
+      activeConversationRef:
+        fallbackOnlyActiveConversation[0]?.conversationRef ?? null,
       warnings: [
         ...warnings,
         ...visibleTextFallback.warnings,
@@ -211,7 +266,7 @@ export function parseBridgeSnapshotPayload(
 
   const activeConversationRef =
     conversations.find((conversation) => conversation.status === "active")?.conversationRef ??
-    payload.conversationRef ??
+    resolvedActiveConversationRef ??
     null;
 
   return {

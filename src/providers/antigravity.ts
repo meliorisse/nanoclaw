@@ -30,7 +30,7 @@ import {
 } from './antigravity-output-contract.js';
 
 const execFileAsync = promisify(execFile);
-const ANTIGRAVITY_READ_TIMEOUT_MS = 15_000;
+const ANTIGRAVITY_READ_TIMEOUT_MS = 30_000;
 const ANTIGRAVITY_ACTION_TIMEOUT_MS = 90_000;
 
 interface AntigravityOverviewResponse {
@@ -629,12 +629,9 @@ export class AntigravityProvider {
 
     try {
       const conversation = await this.runSerializedInteraction(() =>
-        this.runTool<AntigravityConversationResponse>(
-          'get_conversation',
-          {
-            conversationId: conversationIdentifier,
-          },
-        ),
+        this.runTool<AntigravityConversationResponse>('get_conversation', {
+          conversationId: conversationIdentifier,
+        }),
       );
 
       const previewMessages = (conversation.data?.messages || [])
@@ -758,13 +755,10 @@ export class AntigravityProvider {
 
     try {
       const result = await this.runSerializedInteraction(() =>
-        this.runTool<AntigravitySendMessageResponse>(
-          'send_message',
-          {
-            conversationId,
-            text: enrichedText,
-          },
-        ),
+        this.runTool<AntigravitySendMessageResponse>('send_message', {
+          conversationId,
+          text: enrichedText,
+        }),
       );
 
       const warnings = result.warnings?.length
