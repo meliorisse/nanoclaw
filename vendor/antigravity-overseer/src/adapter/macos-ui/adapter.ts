@@ -326,7 +326,18 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
       }
     }
 
-    const messages = visibleConversation?.messages ?? parseConversationMessages(visibleText);
+    const activeConversation = fixture.conversations.find(
+      (conversation) => conversation.conversationRef === fixture.activeConversationRef
+    );
+    const canTrustVisibleTextFallback =
+      source !== "extension-bridge" ||
+      Boolean(
+        visibleConversation &&
+          activeConversation &&
+          activeConversation.conversationRef === conversationRef
+      );
+    const messages = visibleConversation?.messages ??
+      (canTrustVisibleTextFallback ? parseConversationMessages(visibleText) : []);
     const status = visibleConversation
       ? { status: visibleConversation.status, confidence: 0.86, cues: ["structured_fixture"] }
       : parseStatusFromVisibleText(visibleText);
@@ -353,7 +364,15 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
             ? Math.max(0.9, status.confidence)
             : status.confidence,
       evidence: evidence.evidence,
-      warnings: [...fixture.warnings, ...evidence.warnings]
+      warnings: [
+        ...fixture.warnings,
+        ...evidence.warnings,
+        ...(source === "extension-bridge" && !canTrustVisibleTextFallback && !visibleConversation
+          ? [
+              `Requested conversation ${conversationRef} is not the currently confirmed active Antigravity thread, so raw visible text was not reused as a fallback.`
+            ]
+          : [])
+      ]
     };
   }
 

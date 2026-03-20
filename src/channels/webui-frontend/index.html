@@ -1259,6 +1259,24 @@
       return Boolean(data?.__verifiedPreview);
     }
 
+    function isLikelyPollutedAntigravityPreview(data) {
+      if (data?.thread?.provider !== 'antigravity' || !Array.isArray(data?.previewMessages) || !data.previewMessages.length) {
+        return false;
+      }
+      const firstText = String(data.previewMessages[0]?.text || '').toLowerCase();
+      const chromeMarkers = [
+        'start new conversation',
+        'chat history',
+        'workspaces',
+        'knowledge',
+        'browser',
+        'provide feedback',
+        'agent manager',
+        'open editor',
+      ];
+      return chromeMarkers.filter((marker) => firstText.includes(marker)).length >= 2;
+    }
+
     function sanitizeCachedInspector(data) {
       if (!data) return data;
       const previewCount = countPreviewMessages(data);
@@ -1270,6 +1288,13 @@
         return {
           ...data,
           previewMessages: [],
+        };
+      }
+      if (isLikelyPollutedAntigravityPreview(data)) {
+        return {
+          ...data,
+          previewMessages: [],
+          __verifiedPreview: false,
         };
       }
       return data;
