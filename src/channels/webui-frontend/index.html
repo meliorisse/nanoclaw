@@ -1227,19 +1227,22 @@
     function getCachedInspector(threadId) {
       if (!threadId) return null;
       if (inspectorCache.has(threadId)) {
-        return inspectorCache.get(threadId);
+        return sanitizeCachedInspector(inspectorCache.get(threadId));
       }
       const cached = loadJsonCache(INSPECTOR_CACHE_KEY, {});
       const entry = cached?.[threadId] || null;
-      if (entry) inspectorCache.set(threadId, entry);
-      return entry;
+      const sanitized = sanitizeCachedInspector(entry);
+      if (sanitized) inspectorCache.set(threadId, sanitized);
+      return sanitized;
     }
 
     function saveCachedInspector(threadId, data) {
       if (!threadId || !data) return;
-      inspectorCache.set(threadId, data);
+      const sanitized = sanitizeCachedInspector(data);
+      if (!sanitized) return;
+      inspectorCache.set(threadId, sanitized);
       const cached = loadJsonCache(INSPECTOR_CACHE_KEY, {});
-      cached[threadId] = data;
+      cached[threadId] = sanitized;
       saveJsonCache(INSPECTOR_CACHE_KEY, cached);
     }
 
@@ -1252,17 +1255,46 @@
       return data.previewMessages.filter((message) => typeof message?.text === 'string' && message.text.trim()).length;
     }
 
+    function hasVerifiedPreview(data) {
+      return Boolean(data?.__verifiedPreview);
+    }
+
+    function sanitizeCachedInspector(data) {
+      if (!data) return data;
+      const previewCount = countPreviewMessages(data);
+      if (
+        data?.thread?.provider === 'antigravity' &&
+        previewCount > 0 &&
+        !hasVerifiedPreview(data)
+      ) {
+        return {
+          ...data,
+          previewMessages: [],
+        };
+      }
+      return data;
+    }
+
     function mergeInspectorData(current, incoming) {
       if (!current && !incoming) return null;
-      if (!current) return incoming;
+      if (!current) {
+        return incoming
+          ? {
+              ...incoming,
+              __verifiedPreview: countPreviewMessages(incoming) > 0,
+            }
+          : incoming;
+      }
       if (!incoming) return current;
 
       const currentPreviewCount = countPreviewMessages(current);
       const incomingPreviewCount = countPreviewMessages(incoming);
       const previewMessages =
-        incomingPreviewCount >= currentPreviewCount && incomingPreviewCount > 0
+        incomingPreviewCount > 0
           ? incoming.previewMessages
-          : (current.previewMessages || incoming.previewMessages || []);
+          : (currentPreviewCount > 0 && hasVerifiedPreview(current)
+              ? current.previewMessages
+              : []);
 
       const summary =
         typeof incoming.summary === 'string' &&
@@ -1285,6 +1317,8 @@
         evidence: [...evidenceByKey.values()],
         actions: Array.isArray(incoming.actions) ? incoming.actions : (current.actions || []),
         thread: incoming.thread || current.thread || null,
+        __verifiedPreview:
+          incomingPreviewCount > 0 ? true : hasVerifiedPreview(current),
       };
     }
 
