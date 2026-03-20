@@ -291,29 +291,44 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
     };
   }
 
-  async getConversation(conversationRef: string) {
+  async getConversation(
+    conversationRef: string,
+    options?: {
+      conversationTitle?: string | null;
+      projectRef?: string | null;
+      projectTitle?: string | null;
+    }
+  ) {
     let screen = await this.readParsedScreen();
     let { visibleText, fixture, source } = screen;
     let visibleConversation = fixture.conversations.find(
       (conversation) => conversation.conversationRef === conversationRef
     );
+    const requestedConversationTitle =
+      options?.conversationTitle?.trim() ||
+      visibleConversation?.conversationTitle ||
+      path.basename(conversationRef);
+    const requestedProjectRef =
+      options?.projectRef ??
+      visibleConversation?.projectRef ??
+      conversationRef.split(":")[0] ??
+      null;
+    const requestedProjectTitle =
+      options?.projectTitle?.trim() ||
+      fixture.projects.find((project) => project.projectRef === requestedProjectRef)?.projectName ||
+      visibleConversation?.projectName ||
+      null;
 
     if (source === "extension-bridge") {
       const activeConversation = fixture.conversations.find(
         (conversation) => conversation.conversationRef === fixture.activeConversationRef
       );
       if (!visibleConversation || activeConversation?.conversationRef !== conversationRef) {
-        const fallbackProjectRef =
-          visibleConversation?.projectRef ?? conversationRef.split(":")[0] ?? null;
-        const fallbackProjectTitle =
-          fixture.projects.find((project) => project.projectRef === fallbackProjectRef)?.projectName ??
-          visibleConversation?.projectName ??
-          null;
         const focusedScreen = await this.ensureConversationVisible(
           conversationRef,
-          visibleConversation?.conversationTitle ?? path.basename(conversationRef),
-          fallbackProjectRef,
-          fallbackProjectTitle
+          requestedConversationTitle,
+          requestedProjectRef,
+          requestedProjectTitle
         );
 
         if (focusedScreen) {
@@ -347,7 +362,7 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
       ok: true,
       data: {
         conversationRef,
-        title: visibleConversation?.conversationTitle ?? path.basename(conversationRef),
+        title: visibleConversation?.conversationTitle ?? requestedConversationTitle,
         status: status.status,
         messages,
         confidence:
@@ -468,21 +483,40 @@ export class MacOSWindowUIAdapter implements OverseerAdapter {
     };
   }
 
-  async sendMessage(input: { conversationRef: string; text: string }) {
+  async sendMessage(input: {
+    conversationRef: string;
+    conversationTitle?: string | null;
+    projectRef?: string | null;
+    projectTitle?: string | null;
+    text: string;
+  }) {
     const preEvidence = await this.captureEvidence({});
     const { fixture, source } = await this.readParsedScreen();
     const visibleConversation = fixture.conversations.find(
       (conversation) => conversation.conversationRef === input.conversationRef
     );
+    const requestedConversationTitle =
+      input.conversationTitle?.trim() ||
+      visibleConversation?.conversationTitle ||
+      path.basename(input.conversationRef);
+    const requestedProjectRef =
+      input.projectRef ??
+      visibleConversation?.projectRef ??
+      input.conversationRef.split(":")[0] ??
+      null;
+    const requestedProjectTitle =
+      input.projectTitle?.trim() ||
+      visibleConversation?.projectName ||
+      fixture.projects.find((project) => project.projectRef === requestedProjectRef)?.projectName ||
+      null;
 
     if (source === "extension-bridge") {
       const bridgeResult = await this.dispatchBridgeCommand({
         kind: "send_message",
-        workspaceRef: visibleConversation?.projectRef ?? input.conversationRef.split(":")[0] ?? null,
-        workspaceTitle: visibleConversation?.projectName ?? null,
+        workspaceRef: requestedProjectRef,
+        workspaceTitle: requestedProjectTitle,
         conversationRef: input.conversationRef,
-        conversationTitle:
-          visibleConversation?.conversationTitle ?? path.basename(input.conversationRef),
+        conversationTitle: requestedConversationTitle,
         text: input.text,
         probeText: input.text.trim().split(/\r?\n/)[0] ?? input.text.trim()
       });

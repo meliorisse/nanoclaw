@@ -180,7 +180,7 @@ export function mergeAntigravityInspector(
     incoming.summary.trim().length > 0 &&
     (!isLoadingOnlySummary(incoming.summary) || !current.summary)
       ? incoming.summary
-      : current.summary ?? incoming.summary ?? null;
+      : (current.summary ?? incoming.summary ?? null);
   const evidenceByPath = new Map<string, AgentThreadEvidenceLink>();
 
   for (const item of [...current.evidence, ...incoming.evidence]) {
@@ -253,6 +253,7 @@ export class AntigravityProvider {
     string,
     AntigravityThreadInspector
   >();
+  private interactionChain: Promise<void> = Promise.resolve();
 
   private async runTool<T>(
     tool: string,
@@ -280,6 +281,24 @@ export class AntigravityProvider {
     );
 
     return JSON.parse(extractTrailingJson(stdout)) as T;
+  }
+
+  private async runSerializedInteraction<T>(
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.interactionChain;
+    let release = () => {};
+    this.interactionChain = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    await previous.catch(() => {});
+
+    try {
+      return await operation();
+    } finally {
+      release();
+    }
   }
 
   async getSnapshot(force = false): Promise<AntigravitySnapshot> {
@@ -609,11 +628,13 @@ export class AntigravityProvider {
       thread.externalRef;
 
     try {
-      const conversation = await this.runTool<AntigravityConversationResponse>(
-        'get_conversation',
-        {
-          conversationId: conversationIdentifier,
-        },
+      const conversation = await this.runSerializedInteraction(() =>
+        this.runTool<AntigravityConversationResponse>(
+          'get_conversation',
+          {
+            conversationId: conversationIdentifier,
+          },
+        ),
       );
 
       const previewMessages = (conversation.data?.messages || [])
@@ -736,12 +757,14 @@ export class AntigravityProvider {
     }
 
     try {
-      const result = await this.runTool<AntigravitySendMessageResponse>(
-        'send_message',
-        {
-          conversationId,
-          text: enrichedText,
-        },
+      const result = await this.runSerializedInteraction(() =>
+        this.runTool<AntigravitySendMessageResponse>(
+          'send_message',
+          {
+            conversationId,
+            text: enrichedText,
+          },
+        ),
       );
 
       const warnings = result.warnings?.length

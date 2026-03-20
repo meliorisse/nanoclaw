@@ -51,7 +51,14 @@ export interface OverseerAdapter {
   attach(): Promise<WindowSession>;
   listProjects(): Promise<ToolResult<Project[]>>;
   listConversations(projectRef: string): Promise<ToolResult<Conversation[]>>;
-  getConversation(conversationRef: string): Promise<ToolResult<AdapterConversationView>>;
+  getConversation(
+    conversationRef: string,
+    options?: {
+      conversationTitle?: string | null;
+      projectRef?: string | null;
+      projectTitle?: string | null;
+    }
+  ): Promise<ToolResult<AdapterConversationView>>;
   getStatus(conversationRef: string): Promise<ToolResult<{ status: Conversation["status"]; cues: string[] }>>;
   getScreenOverview(): Promise<ToolResult<ScreenOverviewResult>>;
   captureEvidence(input: {
@@ -61,6 +68,9 @@ export interface OverseerAdapter {
   }): Promise<EvidenceCaptureResult>;
   sendMessage(input: {
     conversationRef: string;
+    conversationTitle?: string | null;
+    projectRef?: string | null;
+    projectTitle?: string | null;
     text: string;
   }): Promise<ToolResult<SendMessageResult>>;
   createFollowupAgent(input: {

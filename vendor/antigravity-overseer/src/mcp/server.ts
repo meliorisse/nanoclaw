@@ -51,6 +51,7 @@ async function bootstrap() {
       return getConversationTool(
         adapter,
         conversationsRepository,
+        projectsRepository,
         readString(object.conversationId, "conversationId")
       );
     },
@@ -161,7 +162,7 @@ async function bootstrap() {
     },
     send_message: async (args: unknown) => {
       const object = validateObject(args);
-      return sendMessageTool(adapter, conversationsRepository, {
+      return sendMessageTool(adapter, conversationsRepository, projectsRepository, {
         conversationId: readString(object.conversationId, "conversationId"),
         text: readString(object.text, "text")
       });
