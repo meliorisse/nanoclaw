@@ -106,6 +106,16 @@ When the user asks you to inspect, launch, or message Antigravity work, use the 
 - After launch_antigravity_prompt succeeds, keep the returned threadId and use get_thread_history or wait_for_thread_update on that same thread to review progress or results.
 - Do not send a second Antigravity message merely to verify a fresh launch unless the user explicitly asked for a follow-up interaction.
 
+For general research, repo changes, or skill-design work in WebUI Control:
+
+- Do not invoke the Skill tool speculatively.
+- If the user names a specific skill, first verify that exact skill exists on disk before using it.
+- Do not substitute a different skill name just because it seems related.
+- If the requested skill is missing, continue the work directly with Read, Glob, Grep, and Edit instead of stalling on skill lookup.
+- Prefer direct filesystem inspection over launching a skill when you need to understand repo structure or existing prompts.
+- Do not end your turn immediately after saying "Let me..." or announcing intent. In the same turn, do the inspection/work and return either concrete findings, a patch, or a clear blocker.
+- Treat WebUI Control as an execution lane, not a planning-only chat. Make forward progress before yielding.
+
 Do not claim you launched or tested Antigravity unless a tool call succeeded.
 `.trim();
 
@@ -268,14 +278,44 @@ function shouldForceAntigravityLaunch(text: string): boolean {
   return mentionsAntigravity && asksForNew && asksForThreadLikeWork && !explicitlyWantsExisting;
 }
 
+function shouldApplySkillLookupHints(text: string): boolean {
+  return /\bskill\b/i.test(text);
+}
+
+function buildSkillLookupHint(): string {
+  return `[SKILL LOOKUP REQUIREMENT: This request involves skills. Do not start with a broad repo-wide search or a Bash find over every Markdown file. Check exact skill locations first, in this order:
+1. $HOME/.agents/skills/<skill-name>/SKILL.md
+2. $HOME/.codex/skills/**/SKILL.md
+3. .claude/skills/**/SKILL.md inside the current repo
+4. any obvious project-local skills/ or docs/skill folders in the current repo
+
+Use Glob, Grep, and Read before Bash. Ignore node_modules, .git, caches, and vendor docs unless you already know the skill is there.
+
+If the requested skill is not present, say so plainly and continue the task directly. Do not keep searching indefinitely once you have enough information to answer.]`;
+}
+
 function applyWebUiControlRoutingHints(text: string, enabled: boolean): string {
-  if (!enabled || !shouldForceAntigravityLaunch(text)) {
+  if (!enabled) {
+    return text;
+  }
+
+  const hints: string[] = [];
+
+  if (shouldForceAntigravityLaunch(text)) {
+    hints.push(`[ROUTING REQUIREMENT: The user explicitly asked for a NEW Antigravity thread. Use mcp__nanoclaw__launch_antigravity_prompt for this request. Put the requested test or assignment directly into the launch brief. Do not use mcp__nanoclaw__send_antigravity_message unless the user explicitly asks for a follow-up interaction with an existing thread. After launch, keep the returned threadId and verify progress with mcp__nanoclaw__get_thread_history or mcp__nanoclaw__wait_for_thread_update. Do not probe localhost APIs with Bash or WebFetch when an MCP tool exists. After the tool call, report the exact MCP tool name used and its result.]`);
+  }
+
+  if (shouldApplySkillLookupHints(text)) {
+    hints.push(buildSkillLookupHint());
+  }
+
+  if (hints.length === 0) {
     return text;
   }
 
   return `${text}
 
-[ROUTING REQUIREMENT: The user explicitly asked for a NEW Antigravity thread. Use mcp__nanoclaw__launch_antigravity_prompt for this request. Put the requested test or assignment directly into the launch brief. Do not use mcp__nanoclaw__send_antigravity_message unless the user explicitly asks for a follow-up interaction with an existing thread. After launch, keep the returned threadId and verify progress with mcp__nanoclaw__get_thread_history or mcp__nanoclaw__wait_for_thread_update. Do not probe localhost APIs with Bash or WebFetch when an MCP tool exists. After the tool call, report the exact MCP tool name used and its result.]`;
+${hints.join('\n\n')}`;
 }
 
 interface ParsedMessage {
@@ -481,6 +521,8 @@ async function runQuery(
     : INTERACTIVE_ALLOWED_TOOLS;
   const tools = isScheduledTask
     ? SCHEDULED_TASK_ALLOWED_TOOLS
+    : isWebUiControlInteractive
+      ? WEBUI_CONTROL_ALLOWED_TOOLS
     : undefined;
   const mcpServers = isScheduledTask
     ? undefined
@@ -588,6 +630,16 @@ async function runQuery(
   }
 
   ipcPolling = false;
+  if (resultCount === 0 && lastAssistantText.trim()) {
+    const fallbackResult = lastAssistantText.trim();
+    log(`No SDK result event received; emitting last assistant text as fallback: ${fallbackResult.slice(0, 200)}`);
+    writeOutput({
+      status: 'success',
+      result: fallbackResult,
+      newSessionId,
+    });
+    resultCount++;
+  }
   log(`Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`);
   return { newSessionId, lastAssistantUuid, closedDuringQuery };
 }
@@ -617,6 +669,8 @@ async function main(): Promise<void> {
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
 
   let sessionId = containerInput.sessionId;
+  const isWebUiControlInteractive =
+    containerInput.isScheduledTask !== true && containerInput.groupFolder === 'webui_control';
   fs.mkdirSync(IPC_INPUT_DIR, { recursive: true });
 
   // Clean up stale _close sentinel from previous container runs
